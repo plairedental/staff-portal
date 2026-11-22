@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  signOut, sendPasswordResetEmail
+  signOut, sendPasswordResetEmail, setPersistence, browserLocalPersistence, browserSessionPersistence
 } from 'firebase/auth';
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection,
@@ -104,8 +104,12 @@ function renderAuth(mode = 'login', msg = '') {
       <form id="f" class="card">
         ${signup ? `<label>이름<input id="name" required autocomplete="name"></label>
                     <label>연락처<input id="phone" inputmode="tel" placeholder="010-0000-0000"></label>` : ''}
-        <label>이메일<input id="email" type="email" required autocomplete="email"></label>
+        <label>이메일<input id="email" type="email" required autocomplete="email" value="${signup ? '' : esc(localStorage.getItem('savedEmail') || '')}"></label>
         <label>비밀번호<input id="pw" type="password" required minlength="6" autocomplete="${signup ? 'new-password' : 'current-password'}"></label>
+        ${signup ? '' : `<div class="loginOpts">
+          <label><input type="checkbox" id="remId" ${localStorage.getItem('savedEmail') ? 'checked' : ''}> 아이디 기억</label>
+          <label><input type="checkbox" id="autoIn" ${localStorage.getItem('autoLogin') !== '0' ? 'checked' : ''}> 자동 로그인</label>
+        </div>`}
         ${msg ? `<p class="msg">${esc(msg)}</p>` : ''}
         <button class="primary">${signup ? '가입 신청' : '로그인'}</button>
       </form>
@@ -128,10 +132,16 @@ function renderAuth(mode = 'login', msg = '') {
         signingUp = false;
         await loadMe(cred.user);
       } else {
+        const auto = document.getElementById('autoIn').checked;
+        if (document.getElementById('remId').checked) localStorage.setItem('savedEmail', val('email')); else localStorage.removeItem('savedEmail');
+        localStorage.setItem('autoLogin', auto ? '1' : '0');
+        // 자동 로그인: 브라우저를 닫아도 로그인 유지 / 끄면 창을 닫을 때 로그아웃
+        await setPersistence(auth, auto ? browserLocalPersistence : browserSessionPersistence);
         await signInWithEmailAndPassword(auth, val('email'), document.getElementById('pw').value);
       }
     } catch (e) { signingUp = false; renderAuth(mode, authError(e)); }
   };
+  if (!signup && val('email')) document.getElementById('pw').focus();
   document.getElementById('toSignup')?.addEventListener('click', (e) => { e.preventDefault(); renderAuth('signup'); });
   document.getElementById('toLogin')?.addEventListener('click', (e) => { e.preventDefault(); renderAuth('login'); });
   document.getElementById('reset')?.addEventListener('click', async (e) => {

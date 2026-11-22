@@ -630,3 +630,6 @@ aside.side button.mi.deep.on { color: var(--c); }
   .slip { padding: 0 3px; box-sizing: border-box; }
   .slipTbl { width: calc(100% - 2px) !important; }
 }
+.loginOpts { display: flex; gap: 1.2rem; margin: .2rem 0 .8rem; font-size: .9rem; }
+.loginOpts label { display: inline-flex; align-items: center; gap: .35rem; margin: 0; font-weight: 400; cursor: pointer; }
+.loginOpts input { width: auto; margin: 0; }
