@@ -370,3 +370,13 @@ table.cal { width: 100%; min-width: 640px; border-collapse: collapse; table-layo
   .sideLine { display: none; }
   .og.side { width: auto; }
 }
+
+/* 오전/오후 반차, 고년차/저년차 색 */
+.k-오전반차 { background: #fff4e5 !important; color: #c05621 !important; font-size: .72rem; }
+.k-오후반차 { background: #fdeede !important; color: #9c4221 !important; font-size: .72rem; }
+.bar .b4 { background: #a0aec0; }
+.t-senior { background: #dbeafe; color: #1e3a8a; border-radius: 4px; padding: 0 .25rem; }
+.t-junior { background: #ffedd5; color: #9a3412; border-radius: 4px; padding: 0 .25rem; }
+.legend em { font-style: normal; font-size: .75rem; }
+.chip.t-senior { border-color: #93c5fd; } .chip.t-junior { border-color: #fdba74; }
+.chip.on.t-senior, .chip.on.t-junior { background: var(--c); color: #fff; }

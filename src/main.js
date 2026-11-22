@@ -607,17 +607,12 @@ async function renderManualEdit(id) {
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseD = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
-const H = 8;   // 연차 1일 = 8시간
-const LEAVE_TYPES = { '연차': '종일', '오전반차': '반차', '오후반차': '반차', '시간차': '시간차' };
-const STAMPS = [['', '근무'], ['휴무', '휴무'], ['오전', '오전'], ['오후', '오후'], ['야간', '야간'], ['연차', '연차'], ['반차', '반차'], ['시간차', '시간차']];
+// 우리 치과 기준: 오전반차 0.4일, 오후반차 0.6일
+const LEAVE_TYPES = { '연차': '종일', '오전반차': '오전반차', '오후반차': '오후반차' };
+const HALF = { '오전반차': 0.4, '오후반차': 0.6 };
 const canApprove = () => ['admin', 'chief'].includes(me?.role);
-const hoursOf = (l) => l.hours ?? Number(l.days || 0) * H;
-function fmtH(h) {
-  const neg = h < 0; h = Math.abs(Math.round(h * 10) / 10);
-  const d = Math.floor(h / H + 1e-9), r = Math.round((h - d * H) * 10) / 10;
-  const s = d && r ? `${d}일 ${r}시간` : d ? `${d}일` : r ? `${r}시간` : '0일';
-  return (neg ? '-' : '') + s;
-}
+const daysOf = (l) => HALF[l.type] ?? Number(l.days ?? (l.hours || 0) / 8);
+function fmtD(d) { return `${Math.round(d * 10) / 10}일`; }
 
 // 근로기준법 기준 연차 (입사일 기준, 출근율 80% 이상 가정)
 // - 입사 1년 미만: 1개월 개근마다 1일 (최대 11일)
@@ -650,19 +645,17 @@ function balanceOf(user, leaves) {
   const adj = Number(user.annualAdjust || 0);
   const mine = leaves.filter((l) => l.uid === user.uid);
   const inPeriod = mine.filter((l) => l.status === '승인' && (!p || (l.start >= p.start && l.start < p.end)));
-  const kinds = { '종일': { h: 0, n: 0 }, '반차': { h: 0, n: 0 }, '시간차': { h: 0, n: 0 } };
-  inPeriod.forEach((l) => { const k = kinds[LEAVE_TYPES[l.type] || '종일']; k.h += hoursOf(l); k.n++; });
-  const used = inPeriod.reduce((s, l) => s + hoursOf(l), 0);
-  const total = ((p?.days || 0) + adj) * H;
+  const kinds = { '종일': { h: 0, n: 0 }, '오전반차': { h: 0, n: 0 }, '오후반차': { h: 0, n: 0 }, '기타': { h: 0, n: 0 } };
+  inPeriod.forEach((l) => { const k = kinds[LEAVE_TYPES[l.type] || '기타']; k.h += daysOf(l); k.n++; });
+  const used = inPeriod.reduce((s, l) => s + daysOf(l), 0);
+  const total = (p?.days || 0) + adj;
   return { total, used, left: total - used, period: p, kinds, pending: mine.filter((l) => l.status === '대기').length };
 }
-function countHours(start, end, type, hrs) {
-  const k = LEAVE_TYPES[type];
-  if (k === '반차') return 4;
-  if (k === '시간차') return Number(hrs || 1);
+function countDays(start, end, type) {
+  if (HALF[type]) return HALF[type];
   let n = 0;
   for (let d = parseD(start); d <= parseD(end); d.setDate(d.getDate() + 1)) if (d.getDay() !== 0) n++;
-  return n * H;
+  return n;
 }
 async function loadLeaves() {
   const col = collection(db, 'leaves');
@@ -686,7 +679,7 @@ async function stampLeave(l, code) {
     await setDoc(ref, data);
   }
 }
-const stampCode = (l) => ({ '종일': '연차', '반차': '반차', '시간차': '시간차' })[LEAVE_TYPES[l.type] || '종일'];
+const stampCode = (l) => ({ '종일': '연차', '오전반차': '오전반차', '오후반차': '오후반차' })[LEAVE_TYPES[l.type]] || '반차';
 
 async function renderWork() {
   const tab = sub?.tab || 'schedule';
@@ -705,26 +698,26 @@ function leaveDash(user, leaves) {
     ${b.period ? `<p class="muted sm">${b.period.label} · 연차 기간 ${b.period.start} ~ ${b.period.end}${b.period.next ? ' · ' + b.period.next : ''}</p>`
       : '<p class="msg">입사일이 등록되지 않아 연차를 계산할 수 없어요. 인사관리 → 직원 명부에서 입사일을 넣어 주세요.</p>'}
     <div class="kpis">
-      <div class="kpi"><span>부여</span><b>${fmtH(b.total)}</b>${Number(user.annualAdjust || 0) ? `<small>조정 ${user.annualAdjust > 0 ? '+' : ''}${user.annualAdjust}일 포함</small>` : ''}</div>
-      <div class="kpi"><span>사용</span><b>${fmtH(b.used)}</b></div>
-      <div class="kpi"><span>잔여</span><b class="${b.left < 0 ? 'neg' : 'accent'}">${fmtH(b.left)}</b></div>
+      <div class="kpi"><span>부여</span><b>${fmtD(b.total)}</b>${Number(user.annualAdjust || 0) ? `<small>조정 ${user.annualAdjust > 0 ? '+' : ''}${user.annualAdjust}일 포함</small>` : ''}</div>
+      <div class="kpi"><span>사용</span><b>${fmtD(b.used)}</b></div>
+      <div class="kpi"><span>잔여</span><b class="${b.left < 0 ? 'neg' : 'accent'}">${fmtD(b.left)}</b></div>
       <div class="kpi"><span>대기 중 신청</span><b>${b.pending}건</b></div>
     </div>
     <section class="card">
-      <div class="row between"><div><h2>사용 형태별 합계</h2><p class="muted sm">승인된 신청을 연차 차감량으로 환산했어요. (1일 = ${H}시간)</p></div>
-        <div class="right"><small class="muted">총합</small><div class="bigNum">${fmtH(b.used)}</div></div></div>
+      <div class="row between"><div><h2>사용 형태별 합계</h2><p class="muted sm">승인된 신청을 연차 차감량으로 환산했어요. (오전반차 0.4일 · 오후반차 0.6일)</p></div>
+        <div class="right"><small class="muted">총합</small><div class="bigNum">${fmtD(b.used)}</div></div></div>
       <div class="kinds">
-        <div><span class="ki k1">📅</span> 종일<b>${fmtH(k['종일'].h)}</b><small>${k['종일'].n}회</small></div>
-        <div><span class="ki k2">☀️</span> 반차<b>${fmtH(k['반차'].h)}</b><small>${k['반차'].n}회</small></div>
-        <div><span class="ki k3">⏰</span> 시간차<b>${fmtH(k['시간차'].h)}</b><small>${k['시간차'].n}회</small></div>
+        <div><span class="ki k1">📅</span> 종일<b>${fmtD(k['종일'].h)}</b><small>${k['종일'].n}회</small></div>
+        <div><span class="ki k2">🌅</span> 오전반차<b>${fmtD(k['오전반차'].h)}</b><small>${k['오전반차'].n}회 × 0.4일</small></div>
+        <div><span class="ki k3">🌇</span> 오후반차<b>${fmtD(k['오후반차'].h)}</b><small>${k['오후반차'].n}회 × 0.6일</small></div>
       </div>
-      <div class="bar">${b.used ? `<i class="b1" style="width:${pct(k['종일'].h)}"></i><i class="b2" style="width:${pct(k['반차'].h)}"></i><i class="b3" style="width:${pct(k['시간차'].h)}"></i>` : ''}</div>
+      <div class="bar">${b.used ? `<i class="b1" style="width:${pct(k['종일'].h)}"></i><i class="b2" style="width:${pct(k['오전반차'].h)}"></i><i class="b3" style="width:${pct(k['오후반차'].h)}"></i><i class="b4" style="width:${pct(k['기타'].h)}"></i>` : ''}</div>
     </section>`;
 }
 function leaveRow(l, actions = '') {
   const when = l.start + (l.end && l.end !== l.start ? ' ~ ' + l.end : '');
   return `<div class="lv">
-    <div><b>${esc(l.name)}</b> <span class="muted sm">${esc(l.type)} · ${when} · ${fmtH(hoursOf(l))}</span>
+    <div><b>${esc(l.name)}</b> <span class="muted sm">${esc(l.type)} · ${when} · ${fmtD(daysOf(l))}</span>
       ${l.reason ? `<div class="sm muted">${esc(l.reason)}</div>` : ''}</div>
     <div class="row"><span class="tag ${l.status === '승인' ? '' : 'gray'}">${l.status}</span>${actions}</div></div>`;
 }
@@ -786,10 +779,10 @@ async function renderMyLeave() {
       <button id="openReq" class="primary">＋ 연차 신청</button></div>
     <section class="card form" id="reqCard" style="display:none">
       <h2>연차 신청</h2>
-      <label>종류<select id="lt">${Object.keys(LEAVE_TYPES).map((t) => `<option>${t}</option>`).join('')}</select></label>
+      <label>종류<select id="lt">${Object.keys(LEAVE_TYPES).map((t) => `<option value="${t}">${t}${HALF[t] ? ` (${HALF[t]}일)` : ' (종일)'}</option>`).join('')}</select></label>
       <div class="two"><label>날짜<input type="date" id="ls" value="${today}"></label>
         <label id="leWrap">종료일<input type="date" id="le" value="${today}"></label>
-        <label id="lhWrap" style="display:none">시간<select id="lh">${[1, 2, 3, 4, 5, 6, 7].map((n) => `<option value="${n}">${n}시간</option>`).join('')}</select></label></div>
+</div>
       <label>사유 (선택)<input id="lr" placeholder="예: 개인 사정"></label>
       <p class="sm" id="lcount"></p>
       <div class="row"><button id="lsend" class="primary">신청하기</button><button id="closeReq" class="ghost">닫기</button></div>
@@ -805,17 +798,16 @@ async function renderMyLeave() {
   const upd = () => {
     const t = val('lt'), k = LEAVE_TYPES[t];
     document.getElementById('leWrap').style.display = k === '종일' ? '' : 'none';
-    document.getElementById('lhWrap').style.display = k === '시간차' ? '' : 'none';
     const s = val('ls'), e = k === '종일' ? val('le') : s;
-    document.getElementById('lcount').textContent = s && e && e >= s ? `차감: ${fmtH(countHours(s, e, t, val('lh')))}${k === '종일' ? ' (일요일 제외)' : ''}` : '종료일을 확인해 주세요.';
+    document.getElementById('lcount').textContent = s && e && e >= s ? `차감: ${fmtD(countDays(s, e, t))}${k === '종일' ? ' (일요일 제외)' : ''}` : '종료일을 확인해 주세요.';
   };
-  ['lt', 'ls', 'le', 'lh'].forEach((id) => document.getElementById(id).oninput = upd); upd();
+  ['lt', 'ls', 'le'].forEach((id) => document.getElementById(id).oninput = upd); upd();
   document.getElementById('lsend').onclick = async () => {
     const type = val('lt'), k = LEAVE_TYPES[type], start = val('ls'), end = k === '종일' ? val('le') : start;
     if (!start || end < start) return toast('날짜를 확인해 주세요');
-    const hours = countHours(start, end, type, val('lh'));
+    const days = countDays(start, end, type);
     await addDoc(collection(db, 'leaves'), {
-      uid: me.uid, name: me.name, team: me.team || '', type, start, end, hours, days: hours / H,
+      uid: me.uid, name: me.name, team: me.team || '', type, start, end, days,
       reason: val('lr'), status: '대기', createdAt: serverTimestamp()
     });
     toast('신청했어요'); go('work', { tab: 'leave' });
@@ -853,8 +845,8 @@ async function renderLeaveAll() {
     <p class="eyebrow">LEAVE OVERVIEW</p><h1>직원 연차 현황</h1>
     <div class="kpis">
       <div class="kpi"><span>직원 수</span><b>${people.length}명</b></div>
-      <div class="kpi"><span>전체 부여</span><b>${fmtH(rows.reduce((s, r) => s + r.b.total, 0))}</b></div>
-      <div class="kpi"><span>전체 사용</span><b>${fmtH(rows.reduce((s, r) => s + r.b.used, 0))}</b></div>
+      <div class="kpi"><span>전체 부여</span><b>${fmtD(rows.reduce((s, r) => s + r.b.total, 0))}</b></div>
+      <div class="kpi"><span>전체 사용</span><b>${fmtD(rows.reduce((s, r) => s + r.b.used, 0))}</b></div>
       <div class="kpi"><span>승인 대기</span><b class="${pending.length ? 'accent' : ''}">${pending.length}건</b></div>
     </div>
     ${pending.length ? `<section class="card warn"><h2>승인 대기 (${pending.length})</h2>${pending.map((l) => leaveRow(l, approverActions(l))).join('')}</section>` : ''}
@@ -865,7 +857,7 @@ async function renderLeaveAll() {
         ${rows.map(({ p, b }) => `<tr class="click" data-u="${p.uid}">
           <td><b>${esc(p.name)}</b>${p.status === 'roster' ? ' <span class="tag gray">미가입</span>' : ''}</td><td>${esc(p.team || '-')}</td>
           <td>${p.hireDate || '<span class="msg">미등록</span>'}</td><td class="sm">${b.period ? b.period.label.replace('입사 1년 미만 · ', '') : '-'}</td>
-          <td>${fmtH(b.total)}</td><td>${fmtH(b.used)}</td><td><b class="${b.left < 0 ? 'neg' : ''}">${fmtH(b.left)}</b></td>
+          <td>${fmtD(b.total)}</td><td>${fmtD(b.used)}</td><td><b class="${b.left < 0 ? 'neg' : ''}">${fmtD(b.left)}</b></td>
           <td><div class="mini"><i style="width:${b.total ? Math.min(100, b.used / b.total * 100) : 0}%"></i></div></td><td>${b.pending || ''}</td></tr>`).join('')}
       </table></div>
       <p class="muted sm">이름을 누르면 그 직원의 연차 대시보드를 볼 수 있어요.</p>
@@ -1165,9 +1157,10 @@ async function renderMySlips() {
 
 // ---------- 근무표 (달력 / 표) ----------
 // 우리 치과 근무표 형식: 그날 '연차' / '비번(주휴)' / '야간빠짐(월요일 야간 오프)' 인 사람을 표시
-const LEGACY = { '휴무': '비번', '야간': '야간빠짐', '오전': '반차', '오후': '반차' };
+const LEGACY = { '휴무': '비번', '야간': '야간빠짐', '오전': '오전반차', '오후': '오후반차', '시간차': '반차' };
 const codeOf = (c) => LEGACY[c] || c || '';
-const LINES = [['연차', ['연차', '반차', '시간차']], ['비번', ['비번']], ['야간빠짐', ['야간빠짐']]];
+const LINES = [['연차', ['연차', '오전반차', '오후반차', '반차']], ['비번', ['비번']], ['야간빠짐', ['야간빠짐']]];
+const SUFFIX = { '오전반차': '(오전)', '오후반차': '(오후)', '반차': '(반)' };
 const HOLIDAYS = {
   '2026-01-01': '신정', '2026-02-16': '설날', '2026-02-17': '설날', '2026-02-18': '설날', '2026-03-01': '삼일절', '2026-03-02': '대체공휴일',
   '2026-05-05': '어린이날', '2026-05-24': '부처님 오신 날', '2026-05-25': '대체공휴일', '2026-06-03': '지방선거', '2026-06-06': '현충일',
@@ -1203,6 +1196,9 @@ async function renderSchedule() {
   // 조직도 순서로 정렬 + 그룹
   const rank = (name) => { const i = order.findIndex((o) => o.name === name); return i < 0 ? 999 : i; };
   const groupOf = (name) => order.find((o) => o.name === name) || { group: '기타', doctor: false, gi: 999 };
+  // 진료팀 고년차/저년차 색: 조직도의 직급으로 정해요 (팀장·시니어 = 고년차, 주니어·엔트리 = 저년차)
+  const titleOf = {}; (org.groups || []).forEach((g) => (g.members || []).forEach((m) => { titleOf[m.name] = m.title || ''; }));
+  const tierOf = (name) => /팀장|시니어|고년차/.test(titleOf[name] || '') ? 't-senior' : /주니어|엔트리|저년차|신입/.test(titleOf[name] || '') ? 't-junior' : '';
   data.people.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name, 'ko'));
   const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
   const hol = (d) => data.holidays[d] || HOLIDAYS[`${month}-${pad(d)}`] || '';
@@ -1227,7 +1223,7 @@ async function renderSchedule() {
       const lines = LINES.map(([label, codes]) => {
         const ns = data.people.filter((p) => codes.includes(codeOf(data.cells[p.uid]?.[d])));
         if (!ns.length) return '';
-        return `<div class="ln l-${label}"><span>${label}</span>${ns.map((p) => { const c = codeOf(data.cells[p.uid][d]); return `<em class="${p.uid === me.uid ? 'mine' : ''}">${esc(p.name)}${c === '반차' ? '(반)' : c === '시간차' ? '(시)' : ''}</em>`; }).join('')}</div>`;
+        return `<div class="ln l-${label}"><span>${label}</span>${ns.map((p) => { const c = codeOf(data.cells[p.uid][d]); return `<em class="${p.uid === me.uid ? 'mine' : ''} ${tierOf(p.name)}">${esc(p.name)}${SUFFIX[c] || ''}</em>`; }).join('')}</div>`;
       }).join('');
       return `<td class="cd ${dw === 0 ? 'sun' : dw === 6 ? 'sat' : ''} ${h ? 'hol' : ''} ${editor ? 'edit' : ''}" data-day="${d}">
         <div class="dn"><b>${d}</b>${h ? `<small>${esc(h)}</small>` : ''}</div>${dw === 0 && !lines ? '<div class="muted sm closed">휴진</div>' : lines}</td>`;
@@ -1235,19 +1231,20 @@ async function renderSchedule() {
     shell(`${head}
       <div class="calWrap"><table class="cal"><tr>${'일월화수목금토'.split('').map((w, i) => `<th class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</th>`).join('')}</tr>
         ${Array.from({ length: cells.length / 7 }, (_, w) => `<tr>${cells.slice(w * 7, w * 7 + 7).map(dayHtml).join('')}</tr>`).join('')}</table></div>
-      <div class="legend sm"><span class="ln l-연차"><span>연차</span></span> (반)=반차 (시)=시간차 <span class="ln l-비번"><span>비번</span></span> 주휴 <span class="ln l-야간빠짐"><span>야간빠짐</span></span> 월요일 야간 오프
+      <div class="legend sm"><span class="ln l-연차"><span>연차</span></span> (오전)=오전반차 0.4일 (오후)=오후반차 0.6일 <span class="ln l-비번"><span>비번</span></span> 주휴 <span class="ln l-야간빠짐"><span>야간빠짐</span></span> 월요일 야간 오프 · <em class="t-senior">고년차</em> <em class="t-junior">저년차</em>
         ${editor ? ' · <b>날짜를 누르면 쉬는 사람을 넣을 수 있어요.</b>' : ''}</div>`);
   } else {
     let stamp = sub?.stamp ?? '비번';
     const DOW = '일월화수목금토';
-    const STAMPS2 = [['', '근무'], ['비번', '비번'], ['연차', '연차'], ['반차', '반차'], ['시간차', '시간차'], ['야간빠짐', '야간빠짐']];
-    const cellHtml = (uid, d) => { const c = codeOf(data.cells[uid]?.[d]); return `<td data-u="${uid}" data-d="${d}" class="c ${c ? 'k-' + c : ''} ${new Date(y, m - 1, d).getDay() === 0 ? 'sun' : ''} ${hol(d) ? 'hol' : ''}">${c === '야간빠짐' ? '야간' : c}</td>`; };
+    const STAMPS2 = [['', '근무'], ['비번', '비번'], ['연차', '연차'], ['오전반차', '오전반차'], ['오후반차', '오후반차'], ['야간빠짐', '야간빠짐']];
+    const SHORT = { '야간빠짐': '야간', '오전반차': '오전', '오후반차': '오후' };
+    const cellHtml = (uid, d) => { const c = codeOf(data.cells[uid]?.[d]); return `<td data-u="${uid}" data-d="${d}" class="c ${c ? 'k-' + c : ''} ${new Date(y, m - 1, d).getDay() === 0 ? 'sun' : ''} ${hol(d) ? 'hol' : ''}">${SHORT[c] || c}</td>`; };
     let lastG = null;
     const rows = data.people.map((p) => {
       const g = groupOf(p.name);
       const sep = g.group !== lastG ? `<tr class="grp ${g.doctor ? 'doc' : ''}"><th class="nm" colspan="${last + 1}">${esc(g.group)}</th></tr>` : '';
       lastG = g.group;
-      return sep + `<tr class="${p.uid === me.uid ? 'mine' : ''}"><th class="nm">${esc(p.name)}</th>${Array.from({ length: last }, (_, i) => cellHtml(p.uid, i + 1)).join('')}</tr>`;
+      return sep + `<tr class="${p.uid === me.uid ? 'mine' : ''}"><th class="nm"><span class="${tierOf(p.name)}">${esc(p.name)}</span></th>${Array.from({ length: last }, (_, i) => cellHtml(p.uid, i + 1)).join('')}</tr>`;
     }).join('');
     shell(`${head}
       ${editor ? `<div class="chips stamps">${STAMPS2.map(([k, t]) => `<button data-s="${k}" class="${stamp === k ? 'on' : ''} ${k ? 'k-' + k : ''}">${t}</button>`).join('')}</div>
@@ -1293,9 +1290,9 @@ async function renderSchedule() {
       w.innerHTML = `<div class="modalBox">
         <h2>${m}월 ${d}일 (${dw})</h2>
         <label class="sm">휴일 이름 (비우면 기본 공휴일)<input id="holName" value="${esc(data.holidays[d] || '')}" placeholder="${esc(HOLIDAYS[`${month}-${pad(d)}`] || '예: 원내 휴진, 여름휴가')}"></label>
-        ${[['연차', '연차'], ['반차', '반차'], ['시간차', '시간차'], ['비번', '비번 (주휴)'], ['야간빠짐', '야간빠짐 (월요일 야간 오프)']].map(([code, label]) => `
+        ${[['연차', '연차 (종일)'], ['오전반차', '오전반차 (0.4일)'], ['오후반차', '오후반차 (0.6일)'], ['비번', '비번 (주휴)'], ['야간빠짐', '야간빠짐 (월요일 야간 오프)']].map(([code, label]) => `
           <div class="pick"><b class="ln l-${LINES.find((l) => l[1].includes(code))[0]}"><span>${label}</span></b>
-            <div class="pickG">${groups.map((g) => `<div><small class="muted">${esc(g.g)}</small>${g.ps.map((p) => `<button data-p="${p.uid}" data-c="${code}" class="chip ${sel[p.uid] === code ? 'on' : ''}">${esc(p.name)}</button>`).join('')}</div>`).join('')}</div></div>`).join('')}
+            <div class="pickG">${groups.map((g) => `<div><small class="muted">${esc(g.g)}</small>${g.ps.map((p) => `<button data-p="${p.uid}" data-c="${code}" class="chip ${tierOf(p.name)} ${sel[p.uid] === code ? 'on' : ''}">${esc(p.name)}</button>`).join('')}</div>`).join('')}</div></div>`).join('')}
         <div class="row"><button id="applyM" class="primary">저장</button><button id="closeM" class="ghost">닫기</button></div></div>`;
       w.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => { const { p, c } = b.dataset; sel[p] = sel[p] === c ? undefined : c; const hv = w.querySelector('#holName').value; drawM(); w.querySelector('#holName').value = hv; });
       w.querySelector('#closeM').onclick = () => w.remove();
