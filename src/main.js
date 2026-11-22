@@ -1131,7 +1131,8 @@ async function renderPayroll() {
   (await getDocs(collection(db, 'salaries'))).docs.forEach((d) => { sal[d.id] = d.data(); });
   const conf = (await getDoc(doc(db, 'settings', 'payrollConf'))).data() || {};
   let accRate = Number(conf.accRate || 0);
-  const retireOf = (uid) => sal[uid]?.annual ? Math.round(sal[uid].annual / 12) : 0;   // 퇴직연금: 연봉의 1/12
+  const monthlyOf = (uid) => sal[uid]?.annual ? Math.round(sal[uid].annual / 12) : num(sal[uid]?.monthly);
+  const retireOf = (uid) => { const m = monthlyOf(uid); return m ? Math.round(m / 12) : 0; };   // 퇴직연금: 세전 월급여의 1/12
   const current = all.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
   const ids = [...new Set([...current.map((p) => p.uid), ...Object.keys(rows)])];
   const pord = orgOrder(await loadOrg()); const prk = (n) => { const i = pord.findIndex((o) => o.name === n); return i < 0 ? 999 : i; };
@@ -1172,7 +1173,7 @@ async function renderPayroll() {
           <th colspan="${payCols.length + 1 + (detail && anyHidden ? 1 : 0)}" class="ga">지급 항목</th><th colspan="${dedCols.length + 1}" class="gb">공제 항목</th>
           <th class="gc">퇴직</th><th class="gd">지원</th><th rowspan="2">메모</th><th rowspan="2">상태</th></tr>
         <tr>${payCols.map((t) => `<th>${t}</th>`).join('')}${detail && anyHidden ? '<th title="여름휴가비·직책수당·월차수당·자가운전보조금·야간근로수당">그 외</th>' : ''}<th class="ga">지급 계</th>${dedCols.map((t) => `<th>${t}</th>`).join('')}<th class="gb">공제 계</th>
-          <th class="gc">연봉÷12</th><th class="gd">4대보험 회사분</th></tr>
+          <th class="gc">월급여÷12</th><th class="gd">4대보험 회사분</th></tr>
       </thead>
       <tbody>
         ${people.map((p, i) => `<tr data-row="${p.uid}">
@@ -1199,7 +1200,7 @@ async function renderPayroll() {
     <div class="card sm" id="insSum"></div>
     <div class="row"><button id="savePay" class="primary">저장</button><span class="muted sm" id="dirty">${dirty ? '엑셀 내용을 불러왔어요. 확인 후 저장을 눌러 주세요.' : ''}</span></div>
     <p class="muted sm">· 상태가 <b>확정</b> 또는 <b>지급완료</b>인 직원은 저장하면 본인 계정의 <b>급여명세서</b>에 바로 보여요.<br>
-      · 총 인건비 = 지급 계 + <b>퇴직연금(연봉÷12, 자동)</b> + <b>4대보험 회사 부담분(자동)</b>. 퇴직연금은 직원 명부에 연봉이 있어야 계산돼요.<br>
+      · 총 인건비 = 지급 계 + <b>퇴직연금(세전 월급여÷12, 자동)</b> + <b>4대보험 회사 부담분(자동)</b>. 퇴직연금은 직원 명부에 연봉(세전 월급여)이 있어야 계산돼요.<br>
       · 4대보험 회사분 = 국민연금·건강보험·장기요양은 직원 공제액과 같은 금액, 고용보험은 직원분×1.15/0.9, 산재보험은 (지급액−식대)×산재 요율. 숫자에 마우스를 올리면 항목별 금액이 보여요.<br>
       · 직원 이름을 누르면 명세서를 미리 볼 수 있어요.</p>`);
 
