@@ -176,7 +176,8 @@ function categories() {
   const f = (items) => (items || []).filter((i) => !i[4] || i[4]());
   return [
     { key: 'biz', label: '경영·통계', icon: '📊', show: () => me.role === 'admin', items: [
-      ['perf', '성과·인센티브', '📈', '팀별 목표 매출과 인센티브를 확인해요. (준비 중)']
+    ], admin: [
+      ['incentive', '목표매출·인센티브', '🎯', '인건비 비율로 목표 매출을 정하고 팀별 인센티브를 계산해요.', () => me.role === 'admin']
     ] },
     { key: 'hr', label: '인사관리', icon: '👥', items: [
       ['work:schedule', '근무표', '🗓️', '그날 쉬는 사람을 달력으로 확인해요.'],
@@ -261,9 +262,9 @@ function shell(content) {
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
-      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs'].includes(key) ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
-  $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => goKey(cats.find((c) => c.key === b.dataset.cat).items[0][0]));
+  $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { const c = cats.find((x) => x.key === b.dataset.cat); goKey((c.items[0] || c.admin[0])[0]); });
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
   if (cat.key === 'manual') bindManualSide();
   document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
@@ -284,14 +285,6 @@ function renderHome() {
   $app.querySelectorAll('main [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
 }
 
-function renderPerf() {
-  shell(`<h1>성과·인센티브</h1>
-    <section class="card"><p class="big">준비 중이에요</p>
-      <p>다음 단계에서 만들 예정이에요.</p>
-      <ul class="muted"><li>전체·팀별 목표 매출 (인건비의 3~4배, 조정 가능)</li><li>덴트웹 엑셀을 올리면 팀별 매출·달성률 자동 계산</li><li>초과분 20% 팀 인센티브, 팀장 분배(최대 70%)</li><li>월별 인센티브 지급 내역</li></ul>
-    </section>`);
-}
-
 async function render() {
   shell('<p class="muted">불러오는 중…</p>');
   try {
@@ -299,7 +292,7 @@ async function render() {
     if (view === 'manual') return await renderManual();
     if (view === 'work') return await renderWork();
     if (view === 'settings' && me.role === 'admin') return renderSettings();
-    if (view === 'perf' && me.role === 'admin') return renderPerf();
+    if (view === 'incentive' && me.role === 'admin') return await renderIncentive();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
     if (view === 'docs' && me.role === 'admin') return await renderDocs();
     if (view === 'docreq') return await renderDocReq();
@@ -622,6 +615,136 @@ async function renderPerson(uid) {
     await deleteDoc(doc(db, 'users', uid));
     toast('삭제했어요'); go('hr');
   });
+}
+
+// ---------- 목표매출·인센티브 (관리자) ----------
+// incentive/{YYYY-MM}: { ratio, clinicRate, teamRates:{팀:%}, clinicTeams:[팀], actual:{팀:실제매출}, leaderMax }
+const INC_DEFAULT = { ratio: 20, clinicRate: 15, teamRates: {}, clinicTeams: null, actual: {}, leaderMax: 70 };
+async function renderIncentive() {
+  const now = new Date();
+  const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const [y, m] = month.split('-').map(Number);
+  const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  const [people, salSnap, org, incSnap] = await Promise.all([loadPeople(), getDocs(collection(db, 'salaries')), loadOrg(), getDocs(collection(db, 'incentive'))]);
+  const sal = {}; salSnap.docs.forEach((d) => { sal[d.id] = d.data(); });
+  const saved = {}; incSnap.docs.forEach((d) => { saved[d.id] = d.data(); });
+  // 이 달 저장값이 없으면 가장 최근 달의 설정(실제 매출 제외)을 가져옴
+  const prevKey = Object.keys(saved).filter((k) => k < month).sort().pop();
+  const base = saved[month] || (prevKey ? { ...saved[prevKey], actual: {} } : {});
+  const st = { ...INC_DEFAULT, ...JSON.parse(JSON.stringify(base)) };
+  const fromPrev = !saved[month] && prevKey;
+  const tmap = {}; (org.groups || []).forEach((g) => (g.members || []).forEach((mm) => { tmap[mm.name] = mm.title || ''; }));
+  const monthly = (uid) => sal[uid]?.annual ? Math.round(sal[uid].annual / 12) : num(sal[uid]?.monthly);
+  // 인건비 = 원장(치과의사)과 급여 관리 제외자를 뺀 재직 직원의 세전 월급여 합
+  const staff = people.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사' && p.role !== 'doctor' && !noPay(p, tmap));
+  const teamOf = (p) => (p.team || '').trim() || '(팀 없음)';
+  const teams = [...new Set(staff.map(teamOf))].sort((a, b) => a.localeCompare(b, 'ko'));
+  if (!st.clinicTeams) st.clinicTeams = teams.filter((t) => /진료\s*\d|진료\s*팀\s*\d|진료\d/.test(t));
+  const payByTeam = {}; staff.forEach((p) => { payByTeam[teamOf(p)] = (payByTeam[teamOf(p)] || 0) + monthly(p.uid); });
+  const noSal = staff.filter((p) => !monthly(p.uid));
+  const totalPay = staff.reduce((s, p) => s + monthly(p.uid), 0);
+  const leaderOf = (t) => staff.filter((p) => teamOf(p) === t && p.role === 'leader').map((p) => p.name).join(', ');
+  const fmtW = (n) => comma(Math.round(n)) + '원';
+
+  shell(`
+    <div class="row between"><div><p class="eyebrow">TARGET &amp; INCENTIVE</p><h1>목표매출·인센티브</h1></div>
+      <div class="row"><button class="ghost" id="mPrev">◀</button><b class="monthLbl">${y}년 ${m}월</b><button class="ghost" id="mNext">▶</button><button class="primary" id="incSave">저장</button></div></div>
+    ${fromPrev ? `<p class="reqNow">이 달은 아직 저장 전이에요. ${prevKey.replace('-', '년 ')}월 설정을 불러왔어요. 확인 후 <b>저장</b>해 주세요.</p>` : ''}
+
+    <section class="card">
+      <h3>① 인건비 → 목표 매출</h3>
+      <div class="incFormula"><div><span>전체 인건비</span><b>${fmtW(totalPay)}</b></div><i>÷</i><div><span>인건비 비율</span><b id="rView"></b></div><i>=</i><div><span>목표 매출</span><b class="accent" id="tView"></b></div></div>
+      <div class="sliderRow"><input type="range" id="ratio" min="5" max="50" step="0.5" value="${st.ratio}"><input id="ratioN" class="numBox" inputmode="decimal" value="${st.ratio}"><span>%</span></div>
+      <p class="muted sm">인건비 비율을 낮출수록 목표 매출은 높아져요. 인건비 = 원장을 제외한 재직 직원의 세전 월급여(직원 명부 연봉÷12) 합계예요.</p>
+      <details><summary class="sm">인건비에 들어간 직원 ${staff.length}명 보기</summary>
+        <table class="mt"><tr><th>이름</th><th>팀</th><th class="r">세전 월급여</th></tr>
+        ${staff.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(teamOf(p))}</td><td class="r">${monthly(p.uid) ? comma(monthly(p.uid)) : '<span class="warnTxt">연봉 없음</span>'}</td></tr>`).join('')}</table></details>
+      ${noSal.length ? `<p class="warnTxt">⚠️ 연봉이 비어 있어 인건비에 0원으로 들어간 직원: ${noSal.map((p) => esc(p.name)).join(', ')}</p>` : ''}
+    </section>
+
+    <section class="card">
+      <h3>② 진료팀 목표 매출</h3>
+      <p class="muted sm">진료팀으로 계산할 팀을 고르세요. 각 진료팀 목표 = 총 목표 매출 × (그 팀 세전 월급여 ÷ 진료팀 전체 세전 월급여)</p>
+      <div class="chips" id="ctChips">${teams.map((t) => `<button data-ct="${esc(t)}" class="${st.clinicTeams.includes(t) ? 'on' : ''}">${esc(t)}</button>`).join('')}</div>
+      <div class="tbl"><table class="mt incT" id="clinicT"></table></div>
+      <p class="muted sm">실제 매출은 지금은 직접 넣어요. 나중에 덴트웹 매출 자료와 연결할 수 있어요.</p>
+    </section>
+
+    <section class="card">
+      <h3>③ 인센티브 비율</h3>
+      <div class="rateGrid" id="rateGrid"></div>
+    </section>
+
+    <section class="card">
+      <h3>④ 인센티브 계산 결과</h3>
+      <div id="incResult"></div>
+      <div class="sliderRow sm"><span>진료팀 팀장 최대 몫</span><input type="range" id="lmax" min="30" max="100" step="5" value="${st.leaderMax}"><b id="lmaxV"></b></div>
+      <p class="muted sm">진료팀에 나온 인센티브는 팀장이 배분해요. 팀장은 최대 위 비율까지 가져갈 수 있고, 나머지를 팀원들에게 나누는 건 팀장 재량이에요.</p>
+    </section>`);
+
+  const target = () => totalPay && st.ratio ? totalPay / (st.ratio / 100) : 0;
+  const clinicPay = () => st.clinicTeams.reduce((s, t) => s + (payByTeam[t] || 0), 0);
+  const teamTarget = (t) => clinicPay() ? target() * (payByTeam[t] || 0) / clinicPay() : 0;
+  const draw = () => {
+    document.getElementById('rView').textContent = st.ratio + '%';
+    document.getElementById('tView').textContent = fmtW(target());
+    // ② 진료팀 표
+    const rows = st.clinicTeams.map((t) => {
+      const tg = teamTarget(t), act = num(st.actual[t]), over = Math.max(0, act - tg);
+      return { t, pay: payByTeam[t] || 0, share: clinicPay() ? (payByTeam[t] || 0) / clinicPay() : 0, tg, act, over, rate: act && tg ? act / tg : 0 };
+    });
+    const sumAct = rows.reduce((s, r) => s + r.act, 0), sumOver = rows.reduce((s, r) => s + r.over, 0);
+    const totalOver = Math.max(0, sumAct - target());
+    document.getElementById('clinicT').innerHTML = `<tr><th>팀</th><th class="r">세전 월급여 합</th><th class="r">비중</th><th class="r">목표 매출</th><th class="r">실제 매출</th><th class="r">달성률</th><th class="r">초과 매출</th></tr>
+      ${rows.map((r) => `<tr><td><b>${esc(r.t)}</b></td><td class="r">${comma(r.pay)}</td><td class="r">${(r.share * 100).toFixed(1)}%</td><td class="r">${comma(r.tg)}</td>
+        <td class="r"><input class="pin actIn" data-t="${esc(r.t)}" inputmode="numeric" value="${r.act ? comma(r.act) : ''}" placeholder="0"></td>
+        <td class="r">${r.act ? `<span class="${r.rate >= 1 ? 'ok' : ''}">${(r.rate * 100).toFixed(1)}%</span>` : '-'}</td><td class="r">${r.over ? comma(r.over) : '-'}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">위에서 진료팀을 골라 주세요.</td></tr>'}
+      ${rows.length ? `<tr class="sum"><th>합계</th><th class="r">${comma(clinicPay())}</th><th class="r">100%</th><th class="r">${comma(target())}</th><th class="r">${comma(sumAct)}</th><th class="r">${sumAct ? (sumAct / target() * 100).toFixed(1) + '%' : '-'}</th><th class="r">${comma(totalOver)}</th></tr>` : ''}`;
+    document.querySelectorAll('.actIn').forEach((el) => {
+      el.onfocus = () => { el.value = num(el.value) || ''; el.select(); };
+      el.onchange = () => { st.actual[el.dataset.t] = num(el.value); draw(); };
+    });
+    // ③ 비율 슬라이더
+    const others = teams.filter((t) => !st.clinicTeams.includes(t));
+    const card = (key, label, v, max, step, desc) => `<div class="rateCard"><div class="row between"><b>${esc(label)}</b><span><input class="numBox rateN" data-k="${esc(key)}" value="${v}" inputmode="decimal">%</span></div>
+      <input type="range" class="rateR" data-k="${esc(key)}" min="0" max="${max}" step="${step}" value="${v}"><p class="muted sm">${desc}</p></div>`;
+    const rg = document.getElementById('rateGrid');
+    if (!rg.dataset.built || rg.dataset.built !== JSON.stringify(st.clinicTeams)) {
+      rg.innerHTML = card('__clinic', '진료팀', st.clinicRate, 50, 0.5, `각 진료팀 초과 매출의 <b class="rv" data-k="__clinic">${st.clinicRate}</b>%를 그 팀 인센티브로 줘요.`)
+        + others.map((t) => card(t, t, st.teamRates[t] ?? 0, 20, 0.5, `전체 초과 매출의 <b class="rv" data-k="${esc(t)}">${st.teamRates[t] ?? 0}</b>%를 이 팀 인센티브로 줘요.`)).join('');
+      rg.dataset.built = JSON.stringify(st.clinicTeams);
+      const setRate = (k, v) => { v = Math.max(0, Number(v) || 0); if (k === '__clinic') st.clinicRate = v; else st.teamRates[k] = v;
+        rg.querySelectorAll(`[data-k="${CSS.escape(k)}"]`).forEach((e) => { if (e.classList.contains('rv')) e.textContent = v; else if (document.activeElement !== e) e.value = v; }); draw(); };
+      rg.querySelectorAll('.rateR').forEach((e) => e.oninput = () => setRate(e.dataset.k, e.value));
+      rg.querySelectorAll('.rateN').forEach((e) => e.onchange = () => setRate(e.dataset.k, e.value));
+    }
+    // ④ 결과
+    const lm = st.leaderMax;
+    document.getElementById('lmaxV').textContent = lm + '%';
+    const clinicRes = rows.map((r) => ({ t: r.t, amt: r.over * st.clinicRate / 100, basis: `초과 ${comma(r.over)} × ${st.clinicRate}%`, clinic: true }));
+    const otherRes = others.filter((t) => (st.teamRates[t] || 0) > 0).map((t) => ({ t, amt: totalOver * (st.teamRates[t] || 0) / 100, basis: `전체 초과 ${comma(totalOver)} × ${st.teamRates[t]}%` }));
+    const all = [...clinicRes, ...otherRes], sum = all.reduce((s, r) => s + r.amt, 0);
+    document.getElementById('incResult').innerHTML = `<table class="mt incT"><tr><th>팀</th><th>계산</th><th class="r">인센티브</th><th>배분</th></tr>
+      ${all.map((r) => `<tr><td><b>${esc(r.t)}</b></td><td class="sm">${r.basis}</td><td class="r"><b>${comma(r.amt)}</b></td>
+        <td class="sm">${r.clinic ? `팀장${leaderOf(r.t) ? ' ' + esc(leaderOf(r.t)) : ''} 최대 <b>${comma(r.amt * lm / 100)}</b> · 팀원 최소 <b>${comma(r.amt * (100 - lm) / 100)}</b>` : '팀 내 배분'}</td></tr>`).join('')}
+      <tr class="sum"><th colspan="2">인센티브 총액</th><th class="r">${comma(sum)}</th><th class="sm">${sumAct ? `실제 매출 대비 ${(sum / sumAct * 100).toFixed(2)}%` : ''}</th></tr></table>
+      ${!sumAct ? '<p class="muted sm">② 표에 진료팀 실제 매출을 넣으면 인센티브가 계산돼요.</p>' : ''}`;
+  };
+  draw();
+  const rr = document.getElementById('ratio'), rn = document.getElementById('ratioN');
+  rr.oninput = () => { st.ratio = Number(rr.value); rn.value = st.ratio; draw(); };
+  rn.onchange = () => { st.ratio = Math.min(80, Math.max(1, Number(rn.value) || 20)); rr.value = st.ratio; rn.value = st.ratio; draw(); };
+  document.getElementById('lmax').oninput = (e) => { st.leaderMax = Number(e.target.value); draw(); };
+  $app.querySelectorAll('[data-ct]').forEach((b) => b.onclick = () => {
+    const t = b.dataset.ct; st.clinicTeams = st.clinicTeams.includes(t) ? st.clinicTeams.filter((x) => x !== t) : [...st.clinicTeams, t];
+    b.classList.toggle('on'); draw();
+  });
+  document.getElementById('mPrev').onclick = () => go('incentive', { month: shift(-1) });
+  document.getElementById('mNext').onclick = () => go('incentive', { month: shift(1) });
+  document.getElementById('incSave').onclick = async () => {
+    await setDoc(doc(db, 'incentive', month), { ...st, totalPay, target: Math.round(target()), updatedAt: serverTimestamp(), updatedBy: me.name });
+    toast('저장했어요'); go('incentive', { month });
+  };
 }
 
 // ---------- 서류 발급 (근로계약서·재직증명서) — 관리자만 ----------

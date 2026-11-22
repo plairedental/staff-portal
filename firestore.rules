@@ -97,6 +97,10 @@ service cloud.firestore {
       allow write: if hasRole(['admin', 'chief']);
     }
     // 서류 신청: 본인과 관리자만. 직원은 '신청' 상태로만 만들고, 처리는 관리자
+    // 목표매출·인센티브 설정: 관리자만
+    match /incentive/{id} {
+      allow read, write: if isAdmin();
+    }
     match /docReqs/{id} {
       allow read: if isAdmin() || (active() && resource.data.uid == request.auth.uid);
       allow create: if active() && request.resource.data.uid == request.auth.uid && request.resource.data.status == '신청';
