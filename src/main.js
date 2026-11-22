@@ -172,7 +172,8 @@ function categories() {
       ['work:schedule', '근무표', '🗓️', '그날 쉬는 사람을 달력으로 확인해요.'],
       ['org', '조직도', '🏥', '부서·팀 구성과 담당 업무를 확인해요.'],
       ['work:leave', '내 연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.'],
-      ['slips', '내 급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.']
+      ['slips', '내 급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.'],
+      ['docreq', '서류 신청', '📨', '재직증명서 발급을 신청해요.']
     ], admin: [
       ['work:all', '연차 승인·현황', '✅', '직원 연차 신청을 승인하고 사용 현황을 봐요.', canApprove],
       ['hr', '직원 명부', '📇', '직원 정보, 연봉, 가입 승인을 관리해요.', can.hr],
@@ -246,7 +247,7 @@ function shell(content) {
           ${cat.key === 'manual' ? manualSide(key) : ''}
         </div>
         <div class="sideBottom">
-          ${[...cat.admin, ...GLOBAL_ADMIN()].length ? `<div class="sideGroup"><div class="sideTitle">🔒 관리자 메뉴</div>${[...cat.admin, ...GLOBAL_ADMIN()].map(btn).join('')}</div>` : ''}
+          ${[...cat.admin, ...GLOBAL_ADMIN()].length ? `<div class="sideGroup"><div class="sideTitle">🔒 관리자 메뉴</div>${[...cat.admin, ...GLOBAL_ADMIN()].map((i) => i[0] === 'docs' && docPending ? btn(i).replace('</button>', ` <span class="badgeN">${docPending}</span></button>`) : btn(i)).join('')}</div>` : ''}
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
@@ -291,6 +292,7 @@ async function render() {
     if (view === 'perf' && me.role === 'admin') return renderPerf();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
     if (view === 'docs' && me.role === 'admin') return await renderDocs();
+    if (view === 'docreq') return await renderDocReq();
     if (view === 'slips') return await renderMySlips();
     if (view === 'security') return renderSecurity();
     if (view === 'org') return await renderOrg();
@@ -718,7 +720,8 @@ function certHtml(v, co) {
 
 async function renderDocs() {
   const kind = sub?.kind || 'contract';
-  const [people, coSnap, org] = await Promise.all([loadPeople(), getDoc(doc(db, 'settings', 'company')), loadOrg()]);
+  const [people, coSnap, org, reqs] = await Promise.all([loadPeople(), getDoc(doc(db, 'settings', 'company')), loadOrg(), docReqPanel()]);
+  const req = sub?.req ? reqs.find((r) => r.id === sub.req) : null;
   const co = coSnap.exists() ? coSnap.data() : {};
   const order = orgOrder(org);
   const rankOf = (n) => { const i = order.findIndex((o) => o.name === n); return i < 0 ? 999 : i; };
@@ -732,7 +735,7 @@ async function renderDocs() {
   const v = kind === 'contract'
     ? { name: p.name, rrn: sal.rrn, phone: p.phone, addr: sal.address, dept: p.dept || p.team, job: p.job, start: sal.contractStart || p.hireDate, end: sal.contractEnd,
       annual: num(sal.annual) || '', month: sp.month || '', base: sp.base || '', ot: sp.ot || '', meal: sp.meal, date: today() }
-    : { name: p.name, rrn: sal.rrn, addr: sal.address, dept: p.dept || p.team, job: p.job, start: p.hireDate, status: p.work === '퇴사' ? '퇴사' : '재직중', end: p.leaveDate || '', purpose: '재직 확인용', date: today() };
+    : { name: p.name, rrn: sal.rrn, addr: sal.address, dept: p.dept || p.team, job: p.job, start: p.hireDate, status: p.work === '퇴사' ? '퇴사' : '재직중', end: p.leaveDate || '', purpose: req?.purpose || '재직 확인용', date: today() };
   const F = kind === 'contract'
     ? [['name', '성명'], ['rrn', '주민등록번호'], ['phone', '연락처'], ['addr', '주소'], ['dept', '소속부서'], ['job', '담당업무'], ['start', '계약 시작일', 'date'], ['end', '계약 만료일 (없으면 비워 두기)', 'date'],
       ['annual', '연봉총액', 'money'], ['month', '세전 월 급여액', 'money'], ['base', '기본급', 'money'], ['ot', '고정연장수당', 'money'], ['meal', '식대', 'money'], ['date', '작성일', 'date']]
@@ -742,6 +745,11 @@ async function renderDocs() {
   shell(`
     <div class="row between"><div><p class="eyebrow">DOCUMENTS</p><h1>서류 발급</h1></div>
       <button class="primary" id="print">🖨️ 인쇄 / PDF 저장</button></div>
+    ${reqs.length ? `<section class="card reqBox"><h3>📨 직원 서류 신청 ${reqs.length}건</h3>
+      ${reqs.map((r) => `<div class="reqRow ${req?.id === r.id ? 'cur' : ''}"><div><b>${esc(r.name)}</b> · ${esc(r.type)} <span class="sm">· 용도: ${esc(r.purpose)}${r.copies > 1 ? ` · ${r.copies}부` : ''}${r.needDate ? ` · 필요일 ${esc(r.needDate)}` : ''}</span>${r.note ? `<br><span class="sm cite2">요청: ${esc(r.note)}</span>` : ''}<br><span class="muted sm">${esc(r.date)} 신청</span></div>
+        <div class="row"><button class="primary sm" data-open="${r.id}">🖨️ 서류 열기</button><button class="sm" data-done="${r.id}">✅ 발급 완료</button><button class="ghost sm" data-rej="${r.id}">반려</button></div></div>`).join('')}
+    </section>` : ''}
+    ${req ? `<p class="reqNow">📨 <b>${esc(req.name)}</b>님이 신청한 재직증명서예요. 인쇄한 뒤 위의 <b>✅ 발급 완료</b>를 눌러 주세요.</p>` : ''}
     <div class="chips"><button data-kind="contract" class="${kind === 'contract' ? 'on' : ''}">📄 근로계약서</button><button data-kind="cert" class="${kind === 'cert' ? 'on' : ''}">📃 재직증명서</button></div>
     <div class="docGrid">
       <div>
@@ -764,6 +772,16 @@ async function renderDocs() {
   draw();
   $app.querySelectorAll('[data-kind]').forEach((b) => b.onclick = () => go('docs', { kind: b.dataset.kind, uid }));
   document.getElementById('who').onchange = (e) => go('docs', { kind, uid: e.target.value });
+  $app.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => { const r = reqs.find((x) => x.id === b.dataset.open); go('docs', { kind: 'cert', uid: r.uid, req: r.id }); });
+  $app.querySelectorAll('[data-done]').forEach((b) => b.onclick = async () => {
+    await updateDoc(doc(db, 'docReqs', b.dataset.done), { status: '발급완료', doneBy: me.name, doneDate: today() });
+    toast('발급 완료로 표시했어요. 직원 화면에도 보여요'); go('docs', { kind, uid });
+  });
+  $app.querySelectorAll('[data-rej]').forEach((b) => b.onclick = async () => {
+    const why = prompt('반려 이유를 적어 주세요 (직원에게 보여요)', ''); if (why === null) return;
+    await updateDoc(doc(db, 'docReqs', b.dataset.rej), { status: '반려', reply: why, doneBy: me.name, doneDate: today() });
+    toast('반려했어요'); go('docs', { kind, uid });
+  });
   document.getElementById('toPerson')?.addEventListener('click', (e) => { e.preventDefault(); go('hr', { uid }); });
   $app.querySelectorAll('[data-f]').forEach((el) => el.oninput = el.onchange = () => {
     const k = el.dataset.f;
@@ -790,6 +808,55 @@ async function renderDocs() {
     document.body.classList.add('printModal'); window.print(); document.body.classList.remove('printModal');
     document.title = prevTitle; w.remove();
   };
+}
+
+
+// ---------- 서류 신청 (직원 → 관리자 확인 후 출력) ----------
+// docReqs/{id}: {uid, name, type, purpose, needDate, note, status:'신청'|'발급완료'|'반려', date, at, doneBy, doneDate, reply}
+let docPending = 0;
+async function countDocPending() {
+  if (me?.role !== 'admin') { docPending = 0; return; }
+  try { docPending = (await getDocs(query(collection(db, 'docReqs'), where('status', '==', '신청')))).size; } catch (e) { docPending = 0; }
+}
+const DOC_TYPES = ['재직증명서'];
+const reqStCls = { '신청': 'st-ing', '발급완료': 'st-ok', '반려': 'st-hold' };
+
+async function renderDocReq() {
+  const s = await getDocs(query(collection(db, 'docReqs'), where('uid', '==', me.uid)));
+  const mine = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  shell(`
+    <h1>📨 서류 신청</h1>
+    <p class="muted">신청하면 관리자가 확인한 뒤 발급해 드려요.</p>
+    <section class="card form">
+      <label>서류 종류<select id="dt">${DOC_TYPES.map((t) => `<option>${t}</option>`).join('')}</select></label>
+      <label>용도 <small class="muted">(예: 대출 심사 제출용, 어린이집 제출용)</small><input id="dp" placeholder="어디에 낼 서류인지 적어 주세요"></label>
+      <div class="two"><label>필요한 날짜 (선택)<input id="dd" type="date"></label><label>부수<select id="dc">${[1, 2, 3].map((n) => `<option>${n}</option>`).join('')}</select></label></div>
+      <label>요청 사항 (선택)<input id="dn" placeholder="예: 주민등록번호 뒷자리 가려 주세요"></label>
+      <button class="primary" id="dsend">신청하기</button>
+    </section>
+    <section class="card"><h3>내 신청 내역</h3>
+      ${mine.map((r) => `<div class="reqRow">
+        <div><b>${esc(r.type)}</b> <span class="stTag ${reqStCls[r.status] || ''}">${esc(r.status)}</span><br>
+          <span class="sm">용도: ${esc(r.purpose)}${r.copies > 1 ? ` · ${r.copies}부` : ''}${r.needDate ? ` · 필요일 ${esc(r.needDate)}` : ''}</span>
+          ${r.reply ? `<br><span class="sm cite2">답변: ${esc(r.reply)}</span>` : ''}</div>
+        <div class="right sm muted">${esc(r.date)} 신청${r.doneDate ? `<br>${esc(r.doneDate)} ${r.status === '반려' ? '반려' : '발급'}` : ''}
+          ${r.status === '신청' ? `<br><button class="ghost sm" data-cancel="${r.id}">신청 취소</button>` : ''}</div></div>`).join('') || '<p class="muted">아직 신청한 서류가 없어요.</p>'}
+    </section>`);
+  document.getElementById('dsend').onclick = async () => {
+    const purpose = val('dp'); if (!purpose) return toast('용도를 적어 주세요');
+    await addDoc(collection(db, 'docReqs'), { uid: me.uid, name: me.name, type: val('dt'), purpose, needDate: val('dd'), copies: Number(val('dc')) || 1, note: val('dn'), status: '신청', date: today(), at: serverTimestamp() });
+    toast('신청했어요. 관리자가 확인 후 발급해 드려요'); renderDocReq();
+  };
+  $app.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = async () => {
+    if (!confirm('신청을 취소할까요?')) return;
+    await deleteDoc(doc(db, 'docReqs', b.dataset.cancel)); toast('취소했어요'); renderDocReq();
+  });
+}
+async function docReqPanel() {
+  const s = await getDocs(query(collection(db, 'docReqs'), where('status', '==', '신청')));
+  const list = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  docPending = list.length;
+  return list;
 }
 
 // 기존 직원명부(구글 시트 → 엑셀로 내려받기)에서 주민등록번호·주소·계약기간·연봉 등 채우기
@@ -2761,6 +2828,7 @@ async function loadMe(user, rerender = true) {
   applyTheme();
   if (!rerender) return;
   if (me.status !== 'active' || me.work === '퇴사') return renderWaiting();
+  await countDocPending();
   render();
 }
 

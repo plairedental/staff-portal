@@ -616,3 +616,9 @@ aside.side button.mi.deep.on { color: var(--c); }
   body.printModal .paper { padding: 0 3px !important; }
   body.printModal .paper table.dt { width: calc(100% - 2px) !important; }
 }
+.reqRow { display: flex; justify-content: space-between; gap: .8rem; align-items: center; padding: .7rem 0; border-bottom: 1px dashed var(--line); flex-wrap: wrap; }
+.reqRow:last-child { border-bottom: none; }
+.reqRow.cur { background: var(--c2); border-radius: 8px; padding: .7rem; }
+.reqRow .right { text-align: right; }
+.reqBox { border-color: var(--c); }
+.reqNow { background: #fff7cc; border-radius: 8px; padding: .6rem .9rem; }
