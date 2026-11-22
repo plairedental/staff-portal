@@ -2180,7 +2180,7 @@ async function renderPayroll() {
           <td class="hl" data-t="cost"></td><td data-t="net"></td>
           ${payCols.map((k) => inp(p.uid, 'pay', k)).join('')}${detail && anyHidden ? `<td>${hiddenPay(rows[p.uid]) ? comma(hiddenPay(rows[p.uid])) : ''}</td>` : ''}<td class="ga" data-t="pay"></td>
           ${dedCols.map((k) => inp(p.uid, 'ded', k)).join('')}<td class="gb" data-t="ded"></td>
-          <td class="gc" data-t="retire"></td><td class="gd" data-t="support"></td>
+          <td class="gc"><input class="pin rin" data-u="${p.uid}" data-k="retireManual" inputmode="numeric" value="${rows[p.uid].retireManual === undefined || rows[p.uid].retireManual === null || rows[p.uid].retireManual === '' ? '' : comma(num(rows[p.uid].retireManual))}" title="비워 두면 자동(세전 월급여÷12). 0을 넣으면 이 달은 퇴직연금 없음"></td><td class="gd" data-t="support"></td>
           <td><input class="pin memo" data-u="${p.uid}" data-g="" data-k="memo" value="${esc(rows[p.uid].memo || '')}"></td>
           <td><select data-u="${p.uid}" data-g="" data-k="status" class="st">${['작성중', '확정', '지급완료'].map((s) => `<option ${rows[p.uid].status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
         </tr>`).join('')}
@@ -2198,7 +2198,7 @@ async function renderPayroll() {
     <div class="card sm" id="insSum"></div>
     <div class="row"><button id="savePay" class="primary">저장</button><span class="muted sm" id="dirty">${dirty ? '엑셀 내용을 불러왔어요. 확인 후 저장을 눌러 주세요.' : ''}</span></div>
     <p class="muted sm">· 상태가 <b>확정</b> 또는 <b>지급완료</b>인 직원은 저장하면 본인 계정의 <b>급여명세서</b>에 바로 보여요.<br>
-      · 총 인건비 = 지급 계 + <b>퇴직연금(세전 월급여÷12, 자동)</b> + <b>4대보험 회사 부담분(자동)</b>. 퇴직연금은 직원 명부에 연봉(세전 월급여)이 있어야 계산돼요.<br>
+      · 총 인건비 = 지급 계 + <b>퇴직연금(세전 월급여÷12, 자동 — 칸에 직접 숫자를 넣으면 그 달만 바뀌고, 비우면 다시 자동)</b> + <b>4대보험 회사 부담분(자동)</b>. 퇴직연금은 직원 명부에 연봉(세전 월급여)이 있어야 계산돼요.<br>
       · 4대보험 회사분 = 국민연금·건강보험·장기요양은 직원 공제액과 같은 금액, 고용보험은 직원분×1.15/0.9, 산재보험은 (지급액−식대)×산재 요율. 숫자에 마우스를 올리면 항목별 금액이 보여요.<br>
       · 직원 이름을 누르면 명세서를 미리 볼 수 있어요.</p>`);
 
@@ -2207,8 +2207,9 @@ async function renderPayroll() {
     people.forEach((p) => {
       const r = rows[p.uid], tr = $app.querySelector(`tr[data-row="${p.uid}"]`);
       const er = employerOf(r, accRate);
-      r.retire = retireOf(p.uid); r.support = er.total;
-      tr.querySelector('[data-t=retire]').textContent = r.retire ? comma(r.retire) : '-';
+      const manual = r.retireManual !== undefined && r.retireManual !== null && r.retireManual !== '';
+      r.retire = manual ? num(r.retireManual) : retireOf(p.uid); r.support = er.total;
+      const ri = tr.querySelector('.rin'); ri.placeholder = retireOf(p.uid) ? comma(retireOf(p.uid)) : '0'; ri.classList.toggle('manual', manual);
       const sc = tr.querySelector('[data-t=support]'); sc.textContent = comma(er.total);
       sc.title = Object.entries(er).filter(([k]) => k !== 'total').map(([k, v]) => `${k} ${comma(v)}`).join('\n');
       tr.querySelector('[data-t=pay]').textContent = comma(payOf(r));
@@ -2236,8 +2237,11 @@ async function renderPayroll() {
   $app.querySelectorAll('.pin, .st').forEach((el) => {
     const { u, g, k } = el.dataset;
     const text = el.classList.contains('memo') || el.classList.contains('st');
-    el.oninput = () => { const v = text ? el.value : num(el.value); if (g) rows[u][g][k] = v; else rows[u][k] = v; mark(); recalc(); };
-    if (!text) {
+    el.oninput = () => { const v = el.classList.contains('rin') ? (el.value.trim() === '' ? '' : num(el.value)) : text ? el.value : num(el.value); if (g) rows[u][g][k] = v; else rows[u][k] = v; mark(); recalc(); };
+    if (el.classList.contains('rin')) {
+      el.onfocus = () => { el.value = el.value.trim() === '' ? '' : String(num(el.value)); el.select(); };
+      el.onblur = () => { el.value = el.value.trim() === '' ? '' : comma(num(el.value)); };
+    } else if (!text) {
       el.onfocus = () => { el.value = num(el.value) || ''; el.select(); };
       el.onblur = () => { el.value = num(el.value) ? comma(num(el.value)) : ''; };
     }
@@ -2304,7 +2308,7 @@ async function renderPayroll() {
       const p = all.find((q) => q.name === x.name && q.status !== 'rejected');
       if (!p) continue;
       const old = prevRows[p.uid] || {};
-      imported.rows[p.uid] = { pay: x.pay, ded: x.ded, memo: old.memo || '', status: '확정',
+      imported.rows[p.uid] = { pay: x.pay, ded: x.ded, memo: old.memo || '', status: '확정', ...(old.retireManual !== undefined ? { retireManual: old.retireManual } : {}),
         name: x.name, job: x.job, dept: x.dept, hireDate: x.hireDate, quitDate: x.quitDate };
       const calc = imported.rows[p.uid];
       if (x.fileNet && Math.abs(netOf(calc) - x.fileNet) > 1) msgs.push(`⚠️ ${x.name}: 엑셀 실수령액(${comma(x.fileNet)})과 계산값(${comma(netOf(calc))})이 달라요. 확인해 주세요.`);

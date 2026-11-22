@@ -622,3 +622,5 @@ aside.side button.mi.deep.on { color: var(--c); }
 .reqRow .right { text-align: right; }
 .reqBox { border-color: var(--c); }
 .reqNow { background: #fff7cc; border-radius: 8px; padding: .6rem .9rem; }
+.pay input.rin { color: var(--muted); }
+.pay input.rin.manual { color: #c0392b; font-weight: 700; background: #fff4f2; }
