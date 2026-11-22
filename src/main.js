@@ -176,7 +176,8 @@ function categories() {
     ], admin: [
       ['work:all', '연차 승인·현황', '✅', '직원 연차 신청을 승인하고 사용 현황을 봐요.', canApprove],
       ['hr', '직원 명부', '📇', '직원 정보, 연봉, 가입 승인을 관리해요.', can.hr],
-      ['payroll', '직원 급여 관리', '💰', '전체 직원 급여대장과 총 인건비를 봐요.', () => me.role === 'admin']
+      ['payroll', '직원 급여 관리', '💰', '전체 직원 급여대장과 총 인건비를 봐요.', () => me.role === 'admin'],
+      ['docs', '서류 발급', '🖨️', '근로계약서·재직증명서를 만들어 인쇄해요.', () => me.role === 'admin']
     ] },
     { key: 'manual', label: '원내매뉴얼', icon: '📘', items: [
       ['manual', '홈', '🏠', '매뉴얼을 만든 이유와 읽는 법이에요.'],
@@ -249,7 +250,7 @@ function shell(content) {
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
-      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log'].includes(key) ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => goKey(cats.find((c) => c.key === b.dataset.cat).items[0][0]));
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
@@ -289,6 +290,7 @@ async function render() {
     if (view === 'settings' && me.role === 'admin') return renderSettings();
     if (view === 'perf' && me.role === 'admin') return renderPerf();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
+    if (view === 'docs' && me.role === 'admin') return await renderDocs();
     if (view === 'slips') return await renderMySlips();
     if (view === 'security') return renderSecurity();
     if (view === 'org') return await renderOrg();
@@ -386,7 +388,7 @@ async function renderHr() {
     || roster.find((r) => r.name && r.name === p.name);
 
   shell(`
-    <div class="row between"><div><p class="eyebrow">STAFF LIST</p><h1>직원 명부</h1></div>${can.editHr() ? '<button id="add" class="primary">+ 직원 추가</button>' : ''}</div>
+    <div class="row between"><div><p class="eyebrow">STAFF LIST</p><h1>직원 명부</h1></div>${can.editHr() ? '<div class="row"><label class="upload ghostUp">📥 기존 직원명부 엑셀로 채우기<input type="file" id="rosterX" accept=".xlsx,.xls" hidden></label><button id="add" class="primary">+ 직원 추가</button></div>' : ''}</div>
     ${can.editHr() && pending.length ? `
       <section class="card warn">
         <h2>가입 승인 대기 (${pending.length})</h2>
@@ -431,6 +433,19 @@ async function renderHr() {
     toast('삭제했어요'); go('hr', sub?.showAll ? { showAll: true } : null);
   });
   document.getElementById('add')?.addEventListener('click', () => go('hr', { uid: 'new' }));
+  document.getElementById('rosterX')?.addEventListener('change', async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      const rows = await importRosterExcel(f, people);
+      const hit = rows.filter((r) => r.p), miss = rows.filter((r) => !r.p);
+      if (!hit.length) { alert('직원 명부와 이름이 같은 직원을 찾지 못했어요.'); return; }
+      if (!confirm(`${hit.length}명의 주민등록번호·주소·계약기간을 채울까요?\n(${hit.map((r) => r.name).join(', ')})` +
+        (miss.length ? `\n\n명부에 없어서 건너뛸 사람: ${miss.map((r) => r.name).join(', ')}` : '') +
+        '\n\n연락처·부서·직위·입사일·연봉은 비어 있는 칸만 채워요.')) return;
+      const n = await applyRosterRows(rows);
+      toast(`${n}명의 정보를 채웠어요`); renderHr();
+    } catch (er) { console.error(er); alert(er.message || '엑셀을 읽지 못했어요.'); }
+  });
   document.getElementById('showAll').onchange = (e) => go('hr', { showAll: e.target.checked });
   $app.querySelectorAll('[data-link]').forEach((s) => s.onchange = () => {
     const uid = s.dataset.link;
@@ -529,6 +544,7 @@ async function renderPerson(uid) {
       ${isRoster ? f('email', '이메일 (가입할 때 쓸 이메일)', p.email, 'email') : `<label>이메일<input value="${esc(p.email)}" disabled></label>`}
       ${f('hireDate', '입사일', p.hireDate, 'date')}
       <label>재직상태<select id="work">${WORK.map((w) => `<option ${(p.work || '재직') === w ? 'selected' : ''}>${w}</option>`).join('')}</select></label>
+      ${f('leaveDate', '퇴사일 (퇴사자만)', p.leaveDate, 'date')}
       ${f('annualAdjust', '연차 조정 (일, 예: 2 또는 -1)', p.annualAdjust ?? '', 'number')}
       <label class="row sm"><input type="checkbox" id="noLeave" ${noLeave(p, tmP) ? 'checked' : ''}> 연차 대상 아님 (연차 현황 목록에서 빼기)</label>
     </section>
@@ -541,8 +557,10 @@ async function renderPerson(uid) {
       ${f('note', '메모 (예: 식대 포함, 2026년 연봉협상)', sal.note ?? '')}
     </section>
     <section class="card form">
-      <h2>주소 · 급여계좌 <span class="muted sm">(본인과 관리자만 볼 수 있어요)</span></h2>
+      <h2>주민등록번호 · 주소 · 계약 · 급여계좌 <span class="muted sm">(본인과 관리자만 볼 수 있어요)</span></h2>
+      ${f('rrn', '주민등록번호 (근로계약서·재직증명서에 들어가요)', sal.rrn ?? '')}
       ${f('address', '주소', sal.address ?? '')}
+      <div class="two">${f('contractStart', '계약 시작일', sal.contractStart ?? '', 'date')}${f('contractEnd', '계약 만료일 (없으면 비워 두기)', sal.contractEnd ?? '', 'date')}</div>
       <div class="two">${f('bankName', '은행', sal.bankName ?? '')}${f('bankHolder', '예금주', sal.bankHolder ?? '')}</div>
       ${f('bankAccount', '계좌번호', sal.bankAccount ?? '')}
       ${(sal.history || []).length ? `<div class="hist"><b class="sm">연봉 변경 이력</b>
@@ -560,7 +578,7 @@ async function renderPerson(uid) {
     const data = {
       name: val('name'), job: val('job'), dept: val('dept'), team: val('team'),
       role: document.getElementById('role').value, phone: val('phone'),
-      hireDate: val('hireDate'), work: document.getElementById('work').value,
+      hireDate: val('hireDate'), work: document.getElementById('work').value, leaveDate: val('leaveDate'),
       annualAdjust: val('annualAdjust') === '' ? 0 : Number(val('annualAdjust')),
       noLeave: document.getElementById('noLeave').checked
     };
@@ -569,7 +587,7 @@ async function renderPerson(uid) {
     if (isNew) { const r = await addDoc(collection(db, 'users'), { ...data, status: 'roster', createdAt: serverTimestamp() }); id = r.id; }
     else await updateDoc(doc(db, 'users', uid), data);
     const annual = num(val('annual'));
-    const priv = { address: val('address'), bankName: val('bankName'), bankHolder: val('bankHolder'), bankAccount: val('bankAccount') };
+    const priv = { rrn: val('rrn'), address: val('address'), contractStart: val('contractStart'), contractEnd: val('contractEnd'), bankName: val('bankName'), bankHolder: val('bankHolder'), bankAccount: val('bankAccount') };
     if (annual || val('note') || Object.values(priv).some(Boolean) || !isNew) {
       const next = { ...sal, ...priv, note: val('note'), updatedAt: serverTimestamp() };
       if (annual !== num(sal.annual)) {   // 연봉이 바뀌면 오늘 날짜와 함께 이력에 남김
@@ -590,6 +608,242 @@ async function renderPerson(uid) {
     await deleteDoc(doc(db, 'users', uid));
     toast('삭제했어요'); go('hr');
   });
+}
+
+// ---------- 서류 발급 (근로계약서·재직증명서) — 관리자만 ----------
+// 사업장 정보: settings/company · 직원 개인정보(주민등록번호·주소·계약기간·연봉): salaries/{uid} (본인과 관리자만)
+const COMPANY_FIELDS = [['name', '사업체명', '예: ○○치과'], ['ceo', '대표자', '예: 홍길동'], ['bizNo', '사업자등록번호', '000-00-00000'],
+  ['addr', '소재지', '사업장 주소'], ['bizType', '업태 / 종목', '보건업 / 치과의원'], ['tel', 'TEL', ''], ['fax', 'FAX', '']];
+const won2 = (n) => n || n === 0 ? comma(n) + '원' : '';
+const krDate = (s) => { const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[1]}년 ${m[2]}월 ${m[3]}일` : ''; };
+// 월급에서 식대를 빼고 80%는 기본급(천 원 단위 반올림), 나머지는 고정연장수당 (기존 명부 계산 방식)
+function paySplit(annual, meal = 200000) {
+  const month = annual ? Math.round(annual / 12) : 0;
+  if (!month) return { month: 0, base: 0, ot: 0, meal };
+  const base = Math.round(((month - meal) * 0.8) / 1000) * 1000;
+  return { month, base, ot: month - meal - base, meal };
+}
+
+function contractHtml(v, co) {
+  const t = (s) => esc(s || '');
+  const period = `${krDate(v.start) || '&nbsp;'} ~ ${v.end ? krDate(v.end) : '기간의 정함 없음'}`;
+  return `<div class="paper contract">
+  <h2>표준 근로계약서</h2>
+  <p>${t(co.name)} 대표원장 ${t(co.ceo)} (이하 '사업주'라 함)과 근로자 (이하 '근로자'라 함)는 상호 신의성실의 원칙에 입각하여 다음과 같이 근로계약을 체결하고 이를 성실히 이행할 것을 확약한다.</p>
+  <table class="dt"><tr><th>성명</th><td>${t(v.name)}</td><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
+    <tr><th>연락처</th><td>${t(v.phone)}</td><th>주소</th><td>${t(v.addr)}</td></tr>
+    <tr><th>소속부서</th><td>${t(v.dept)}</td><th>근무장소</th><td>${t(co.name)} 사업장 소재지 및 업무상 필요한 일체의 장소</td></tr></table>
+  <h3>제1조 [ 근로계약기간 ]</h3>
+  <table class="dt"><tr><th>근로계약기간</th><td>${period}</td></tr></table>
+  <p>① 기간의 정함이 있는 근로계약이 체결된 경우, 사용자가 근로자에게 계약기간 내에 서면 또는 구두로 계약의 종료를 통보한 때에는 제1항의 계약 만료일에 근로계약은 자동으로 종료한다.</p>
+  <p>② 제2항에도 불구하고 근로자가 신규 입사자인 경우, 제1항의 계약 만료일이 경과되었음에도 불구하고 사용자의 이의 없이 근로자가 계속 근로한 때에는 제1항의 입사일로부터 1년이 되는 날까지 근로계약이 자동으로 연장된 것으로 본다.</p>
+  <h3>제2조 [ 담당업무 및 근무장소 ]</h3>
+  <table class="dt"><tr><th>담당업무</th><td>${t(v.job)} 및 관련된 일체의 부수업무</td></tr><tr><th>근무장소</th><td>사업장의 소재지 및 업무상 필요한 일체의 장소</td></tr></table>
+  <h3>제3조 [ 소정근로일 및 근로시간과 휴게시간 ]</h3>
+  <p>① 근로자의 소정근로일은 월요일부터 토요일 중 근무편성에 따라 1일을 휴무하는 주5일제 근무를 원칙으로 한다. 단, 근로자는 주중 공휴일이 있는 경우 그 날을 휴무일로 편성하고 나머지 날을 소정근로일로 편성할 수 있음에 동의한다.</p>
+  <p>② 근로자의 근로일별 소정근로시간(업무준비시간을 포함한다) 및 휴게시간은 다음과 같다. 단, 근로자는 업무사정으로 토요일 휴게시간에 휴게하지 못한 경우에는 조기퇴근하는 방법으로 휴게시간을 갈음하는 것에 동의한다.<br>&nbsp;&nbsp;1. 평 일 : 09:00 ~ 18:30 (휴게시간 12:30 ~ 14:00)<br>&nbsp;&nbsp;2. 토요일 : 09:00 ~ 14:00 (휴게시간 13:00 ~ 13:30)</p>
+  <p>③ 근로자의 월 단위 소정근로시간은 다음의 방식으로 계산한다.<br>&nbsp;&nbsp;1. 1주 소정 근로시간 : 8시간 * 5일 = 1주 40시간 (가장 장시간인 경우를 기준으로 산정한다)<br>&nbsp;&nbsp;2. 1월 소정 근로시간 : (주 40시간 + 주휴 8시간) * 4.345주 = 1월 약 209시간</p>
+  <h3>제4조 [ 시간외근로 ]</h3>
+  <p>① 근로자는 월요일 근무 시 20:30까지 2시간의 연장근로를 실시하는 것에 동의한다.</p>
+  <p>② 사용자는 근로자에게 다음 각 호의 연장근로시간에 해당하는 제수당을 월 급여와 함께 지급한다.<br>&nbsp;&nbsp;1. 제1항에 따른 1주 2시간의 연장근로시간<br>&nbsp;&nbsp;2. 그 외 산정하기 곤란한 연장근로의 발생에 대비한 1주 평균 2.5시간의 연장근로시간<br>&nbsp;&nbsp;3. 1월 연장 근로시간 : 1주 4.5시간 * 4.345주 = 1월 약 19시간</p>
+  <p>③ 근로자는 사용자의 업무상 필요가 있는 경우 노동관계법령이 허용하는 범위 내에서 제1항 및 제2항 외의 시간외근로(연장근로 및 휴일근로)를 실시하는 것에 동의하며, 이 경우 사용자는 근로자에게 별도의 시간외수당을 지급한다.</p>
+  <p>④ 근로자는 사용자의 승인 또는 지시 없이 시간외근로를 실시하여서는 아니되며, 이를 위반하여 실시하는 경우 별도의 임금을 지급하지 아니한다.</p>
+  <h3>제5조 [ 임금의 구성항목 및 지급방법 ]</h3>
+  <table class="dt pay5"><tr><th>항목</th><th>금액</th><th>산출 내역 및 지급 기준</th></tr>
+    <tr><th>연봉총액</th><td class="r">${won2(v.annual)}</td><td>세전 연간 총 지급액 (퇴직금 별도)</td></tr>
+    <tr><th>세전 월 급여액</th><td class="r">${won2(v.month)}</td><td>기본급 + 고정연장수당 + 식대 합계액</td></tr>
+    <tr><th>기본급</th><td class="r">${won2(v.base)}</td><td>월 소정근로시간(209시간)에 대한 통상임금 기준 기본 대가</td></tr>
+    <tr><th>고정연장수당</th><td class="r">${won2(v.ot)}</td><td></td></tr>
+    <tr><th>식대</th><td class="r">${won2(v.meal)}</td><td>비과세 실비변상적 식사보조비 (월 200,000원 한도 비과세)</td></tr>
+    <tr><th>지급일 및 방법</th><td colspan="2">매월 5일 (공휴일인 경우 그 전일 또는 익일 지급), 근로자 명의의 급여통장으로 계좌이체 직접 지급</td></tr></table>
+  <p>① 근로자가 부담하는 제세공과금에 대한 연말정산금액은 환급 또는 징수여부와 관계없이 모두 근로자에게 귀속한다.</p>
+  <p>② 근로자가 월 급여의 산정기간 도중 입퇴사한 경우 위의 세전 월 급여액을 해당 월의 총 일수로 나눈 후 재직일수를 곱하여 일할계산한다.</p>
+  <p>③ 근로자가 월 급여의 산정기간 도중 지각, 조퇴한 경우에는 해당 시간분의 통상시급을 공제하며, 결근이 발생한 경우에는 해당 일의 임금 및 해당 주의 주휴수당을 공제한다.</p>
+  <p>④ 근로자는 중도퇴사한 경우 임금 및 4대보험 정산 등 금품청산을 위하여 퇴사 월의 임금지급기일을 정기 급여일까지 연장하는 것에 동의한다.</p>
+  <h3>제6조 [ 퇴직급여 및 기타수당 ]</h3>
+  <p>① 사용자는 근로자가 1년 이상 계속근로한 후 퇴직하는 경우 근로자퇴직급여보장법에 따른 퇴직금 또는 퇴직급여를 지급한다.</p>
+  <p>② 사용자는 근로자에게 그 재량에 따라 제5조의 임금 및 법정 제수당 외 인센티브 등 기타수당을 지급할 수 있다. 단, 기타수당을 지급하는 경우라 하더라도 사용자는 기타수당의 지급여부, 지급기준 등 일체의 사항에 대한 상시적인 개폐권을 보유하며, 근로자에 대한 지급의무를 부담하지 아니한다.</p>
+  <h3>제7조 [ 휴일 및 휴가 ]</h3>
+  <p>① 주휴일: 매주 일요일을 유급 주휴일로 정하며, 병원이 정한 주중 1일을 무급휴무일로 한다.</p>
+  <p>② 법정휴일: 근로자의 날(5월 1일) 및 관공서 공휴일에 관한 규정에서 정한 공휴일(대체공휴일 포함)은 유급휴일로 처리한다.</p>
+  <p>③ 연차유급휴가: 근로기준법 제60조가 정하는 바에 따라 산정 및 부여하며, 사전 서면 신청 후 진료에 지장이 없도록 사용한다.</p>
+  <h3>제8조 [ 비밀유지 및 보안 의무 ]</h3>
+  <p>① 근로자는 재직 중은 물론 퇴직 후에도 환자의 의료정보, 개인정보, 병원의 전산자료 및 영업비밀을 제3자에게 누설하지 아니한다.</p>
+  <p>② 근로자는 본인의 임금(연봉, 기본급, 수당 등 일체) 내역을 타 직원 및 외부에 절대 누설하지 않으며, 위반 시 징계 조치를 감수한다.</p>
+  <h3>제9조 [ 계약 해지 및 퇴직 절차 ]</h3>
+  <p>① 근로자가 자진 퇴직하고자 하는 경우, 퇴직일 또는 계약기간 만료일로부터 적어도 30일 이전에 서면으로 사직서를 제출하여야 하며, 퇴직일 전까지 업무에 대한 자료와 정보를 후임자에게 성실히 인계하여야 한다.</p>
+  <p>② 사용자는 근로자에게 다음 각 호의 사유가 발생한 경우 근로계약을 해지할 수 있다.<br>&nbsp;&nbsp;1. 음주 후 출근하거나 근무 중 음주하였을 경우<br>&nbsp;&nbsp;2. 정당한 이유 없이 3일 이상 무단결근을 하거나 경위서를 1개월간 3회 이상 제출할 경우<br>&nbsp;&nbsp;3. 업무를 게을리하거나 업무수행 능력이 부족한 경우<br>&nbsp;&nbsp;4. 상사의 정당한 지시에 따르지 아니한 경우<br>&nbsp;&nbsp;5. 근로자의 귀책 사유로 사용자에게 사업상 중대한 지장을 초래하거나 재산상 손실이 발생한 경우<br>&nbsp;&nbsp;6. 지각을 반복하여 업무에 지장을 준 경우 (1개월간 5회 이상)<br>&nbsp;&nbsp;7. 풍기문란으로 직장규율을 위반하였을 경우<br>&nbsp;&nbsp;8. 불친절로 제기된 고객의 항의가 1개월간 3회 이상일 경우<br>&nbsp;&nbsp;9. 기타 전 각 호에 준하는 사유가 발생한 경우</p>
+  <p>⑤ 근로자가 개인사정으로 입사일로부터 3개월 이내에 퇴사하는 경우 의복비를 반환하여야 한다.</p>
+  <p>④ 본 계약서에 명시되지 않은 사항은 근로기준법, 노동관계법령 및 병원의 취업규칙(사규)에서 정하는 바에 따른다.</p>
+  <h3>제10조 [ 기타사항 ]</h3>
+  <p>① 근로자는 고의 또는 중대한 과실로 인하여 사용자에게 손해를 입힌 경우에는 책임있는 범위 내에서 그 실손해에 대한 책임을 진다.</p>
+  <p>② 근로자는 본 근로계약 및 사용자의 취업규칙에 따라 성실히 근무하여야 하며, 사용자는 근로자의 근무태도, 업무능력, 질서문란 등에 대하여 취업규칙에 따라 적절한 조치를 취할 수 있다.</p>
+  <p>③ 본 근로계약에 명시되지 아니한 사항은 취업규칙, 노동관계법령에 따른다.</p>
+  <p class="center gap">본 계약 체결을 증명하기 위하여 계약서 2부를 작성하고, 사업주와 근로자가 각각 서명 또는 날인 후 각 1부씩 보관한다.</p>
+  <p class="center date">${krDate(v.date).replace(/ /g, '  ')}</p>
+  <div class="signs">
+    <table class="dt"><tr><th colspan="2" class="center">[ 사 업 주 (사용자) ]</th></tr>
+      <tr><th>사업체명</th><td>${t(co.name)}</td></tr><tr><th>사업자번호</th><td>${t(co.bizNo)}</td></tr>
+      <tr><th>소재지</th><td>${t(co.addr)}</td></tr><tr><th>대표자</th><td>${t(co.ceo)}&nbsp;&nbsp;(직인/서명)</td></tr></table>
+    <table class="dt"><tr><th colspan="2" class="center">[ 근 로 자 ]</th></tr>
+      <tr><th>주소</th><td>${t(v.addr)}</td></tr><tr><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
+      <tr><th>연락처</th><td>${t(v.phone)}</td></tr><tr><th>성명</th><td>${t(v.name)}&nbsp;&nbsp;(서명 또는 인)</td></tr></table>
+  </div></div>`;
+}
+
+function certHtml(v, co) {
+  const t = (s) => esc(s || '');
+  const quit = v.status === '퇴사';
+  return `<div class="paper cert">
+  <h2>재&nbsp;&nbsp;직&nbsp;&nbsp;증&nbsp;&nbsp;명&nbsp;&nbsp;서</h2>
+  <h3>[ 1. 인적사항 ]</h3>
+  <table class="dt"><tr><th>성명</th><td>${t(v.name)}</td><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
+    <tr><th>주소</th><td colspan="3">${t(v.addr)}</td></tr></table>
+  <h3>[ 2. 재직사항 ]</h3>
+  <table class="dt"><tr><th>회사명</th><td>${t(co.name)}</td><th>대표자</th><td>대표원장 ${t(co.ceo)}</td></tr>
+    <tr><th>사업자등록번호</th><td>${t(co.bizNo)}</td><th>업태 / 종목</th><td>${t(co.bizType)}</td></tr>
+    <tr><th>소재지</th><td colspan="3">${t(co.addr)}</td></tr>
+    <tr><th>직위 및 담당업무</th><td>${t(v.job)}</td><th>소속부서</th><td>${t(v.dept)}</td></tr>
+    <tr><th>입사일자</th><td>${krDate(v.start)}</td><th>재직구분</th><td>${quit ? '퇴사' : '재직중'}</td></tr>
+    <tr><th>재직기간</th><td colspan="3">${krDate(v.start)} ~ ${quit ? krDate(v.end) : '현재 (재직중)'}</td></tr></table>
+  <h3>[ 3. 증명서 용도 ]</h3>
+  <table class="dt"><tr><th>용도</th><td>${t(v.purpose)}</td></tr></table>
+  <p class="center stmt">상기인은 위와 같이 ${quit ? '재직하였음' : '현재 재직 중임'}을 증명합니다.</p>
+  <p class="center date">${krDate(v.date).replace(/ /g, '   ')}</p>
+  <p class="center seal">${t(co.name).split('').join(' ')}&nbsp;&nbsp;&nbsp;대 표 원 장&nbsp;&nbsp;&nbsp;&nbsp;${t(co.ceo).split('').join('&nbsp;&nbsp;&nbsp;')}&nbsp;&nbsp;&nbsp;(인)</p>
+  ${co.tel || co.fax ? `<p class="center tel">${co.tel ? 'TEL : ' + t(co.tel) : ''}&nbsp;&nbsp;&nbsp;&nbsp;${co.fax ? 'FAX : ' + t(co.fax) : ''}</p>` : ''}
+  </div>`;
+}
+
+async function renderDocs() {
+  const kind = sub?.kind || 'contract';
+  const [people, coSnap, org] = await Promise.all([loadPeople(), getDoc(doc(db, 'settings', 'company')), loadOrg()]);
+  const co = coSnap.exists() ? coSnap.data() : {};
+  const order = orgOrder(org);
+  const rankOf = (n) => { const i = order.findIndex((o) => o.name === n); return i < 0 ? 999 : i; };
+  const list = people.filter((p) => ['active', 'roster'].includes(p.status))
+    .sort((a, b) => ((a.work === '퇴사') - (b.work === '퇴사')) || rankOf(a.name) - rankOf(b.name) || a.name.localeCompare(b.name, 'ko'));
+  const uid = sub?.uid || list[0]?.uid;
+  const p = list.find((x) => x.uid === uid) || {};
+  let sal = {};
+  if (p.uid) { const s = await getDoc(doc(db, 'salaries', p.uid)); sal = s.exists() ? s.data() : {}; }
+  const sp = paySplit(num(sal.annual));
+  const v = kind === 'contract'
+    ? { name: p.name, rrn: sal.rrn, phone: p.phone, addr: sal.address, dept: p.dept || p.team, job: p.job, start: sal.contractStart || p.hireDate, end: sal.contractEnd,
+      annual: num(sal.annual) || '', month: sp.month || '', base: sp.base || '', ot: sp.ot || '', meal: sp.meal, date: today() }
+    : { name: p.name, rrn: sal.rrn, addr: sal.address, dept: p.dept || p.team, job: p.job, start: p.hireDate, status: p.work === '퇴사' ? '퇴사' : '재직중', end: p.leaveDate || '', purpose: '재직 확인용', date: today() };
+  const F = kind === 'contract'
+    ? [['name', '성명'], ['rrn', '주민등록번호'], ['phone', '연락처'], ['addr', '주소'], ['dept', '소속부서'], ['job', '담당업무'], ['start', '계약 시작일', 'date'], ['end', '계약 만료일 (없으면 비워 두기)', 'date'],
+      ['annual', '연봉총액', 'money'], ['month', '세전 월 급여액', 'money'], ['base', '기본급', 'money'], ['ot', '고정연장수당', 'money'], ['meal', '식대', 'money'], ['date', '작성일', 'date']]
+    : [['name', '성명'], ['rrn', '주민등록번호'], ['addr', '주소'], ['job', '직위 및 담당업무'], ['dept', '소속부서'], ['start', '입사일자', 'date'], ['status', '재직구분', 'status'], ['end', '퇴사일 (퇴사자만)', 'date'], ['purpose', '용도'], ['date', '발급일', 'date']];
+  const missing = F.filter(([k]) => ['name', 'rrn', 'addr', 'job', 'start'].includes(k) && !v[k]).map(([, l]) => l);
+  const coMissing = !co.name || !co.ceo || !co.bizNo || !co.addr;
+  shell(`
+    <div class="row between"><div><p class="eyebrow">DOCUMENTS</p><h1>서류 발급</h1></div>
+      <button class="primary" id="print">🖨️ 인쇄 / PDF 저장</button></div>
+    <div class="chips"><button data-kind="contract" class="${kind === 'contract' ? 'on' : ''}">📄 근로계약서</button><button data-kind="cert" class="${kind === 'cert' ? 'on' : ''}">📃 재직증명서</button></div>
+    <div class="docGrid">
+      <div>
+        <section class="card form">
+          <label>직원 선택<select id="who">${list.map((x) => `<option value="${x.uid}" ${x.uid === uid ? 'selected' : ''}>${esc(x.name)}${x.job ? ' · ' + esc(x.job) : ''}${x.work === '퇴사' ? ' (퇴사)' : ''}</option>`).join('')}</select></label>
+          ${missing.length ? `<p class="warnTxt">⚠️ 직원 명부에 비어 있는 항목: ${missing.join(', ')}. 아래 칸에 직접 쓰거나 <a href="#" id="toPerson">직원 명부</a>에서 채워 주세요.</p>` : '<p class="muted sm">직원 명부 내용이 자동으로 채워졌어요. 이 서류에만 바꿀 내용은 아래 칸에서 고치세요.</p>'}
+          ${F.map(([k, l, ty]) => ty === 'status'
+            ? `<label>${l}<select data-f="${k}"><option ${v[k] !== '퇴사' ? 'selected' : ''}>재직중</option><option ${v[k] === '퇴사' ? 'selected' : ''}>퇴사</option></select></label>`
+            : `<label>${l}<input data-f="${k}" ${ty === 'date' ? 'type="date"' : ty === 'money' ? 'inputmode="numeric"' : ''} value="${esc(ty === 'money' ? (v[k] === '' ? '' : comma(v[k])) : v[k] ?? '')}"></label>`).join('')}
+          ${kind === 'contract' ? '<p class="muted sm">연봉을 바꾸면 월 급여·기본급·고정연장수당이 다시 계산돼요. (월급에서 식대를 뺀 금액의 80%가 기본급)</p>' : ''}
+        </section>
+        <details class="card" ${coMissing ? 'open' : ''}><summary><b>🏥 사업장 정보</b> ${coMissing ? '<span class="warnTxt">— 먼저 채워 주세요</span>' : '<span class="muted sm">(모든 서류에 공통)</span>'}</summary>
+          <div class="form">${COMPANY_FIELDS.map(([k, l, ph]) => `<label>${l}<input data-co="${k}" value="${esc(co[k] || '')}" placeholder="${ph}"></label>`).join('')}
+          <button class="primary sm" id="coSave">사업장 정보 저장</button></div></details>
+      </div>
+      <div class="paperWrap" id="paper"></div>
+    </div>`);
+  const cur = { ...v }, coCur = { ...co };
+  const draw = () => { document.getElementById('paper').innerHTML = kind === 'contract' ? contractHtml(cur, coCur) : certHtml(cur, coCur); };
+  draw();
+  $app.querySelectorAll('[data-kind]').forEach((b) => b.onclick = () => go('docs', { kind: b.dataset.kind, uid }));
+  document.getElementById('who').onchange = (e) => go('docs', { kind, uid: e.target.value });
+  document.getElementById('toPerson')?.addEventListener('click', (e) => { e.preventDefault(); go('hr', { uid }); });
+  $app.querySelectorAll('[data-f]').forEach((el) => el.oninput = el.onchange = () => {
+    const k = el.dataset.f;
+    const money = ['annual', 'month', 'base', 'ot', 'meal'].includes(k);
+    cur[k] = money ? (el.value.trim() === '' ? '' : num(el.value)) : el.value;
+    if (k === 'annual' || k === 'meal') {
+      const s = paySplit(num(cur.annual), num(cur.meal));
+      Object.assign(cur, { month: s.month || '', base: s.base || '', ot: s.ot || '' });
+      ['month', 'base', 'ot'].forEach((x) => { const i = $app.querySelector(`[data-f="${x}"]`); if (i) i.value = cur[x] === '' ? '' : comma(cur[x]); });
+    }
+    draw();
+  });
+  $app.querySelectorAll('[data-f]').forEach((el) => { if (['annual', 'month', 'base', 'ot', 'meal'].includes(el.dataset.f)) el.onblur = () => { el.value = el.value.trim() === '' ? '' : comma(num(el.value)); }; });
+  $app.querySelectorAll('[data-co]').forEach((el) => el.oninput = () => { coCur[el.dataset.co] = el.value; draw(); });
+  document.getElementById('coSave').onclick = async () => {
+    await setDoc(doc(db, 'settings', 'company'), coCur); toast('사업장 정보를 저장했어요');
+  };
+  document.getElementById('print').onclick = () => {
+    const w = document.createElement('div'); w.className = 'modal printable docPrint';
+    w.innerHTML = `<div class="modalBox">${document.getElementById('paper').innerHTML}</div>`;
+    document.body.appendChild(w);
+    const prevTitle = document.title;
+    document.title = `${kind === 'contract' ? '근로계약서' : '재직증명서'}_${cur.name || ''}_${today()}`;
+    document.body.classList.add('printModal'); window.print(); document.body.classList.remove('printModal');
+    document.title = prevTitle; w.remove();
+  };
+}
+
+// 기존 직원명부(구글 시트 → 엑셀로 내려받기)에서 주민등록번호·주소·계약기간·연봉 등 채우기
+async function importRosterExcel(file, people) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.read(await file.arrayBuffer());
+  const norm = (s) => String(s ?? '').replace(/\s+/g, '');
+  let rows = null, h = -1;
+  for (const n of wb.SheetNames) {
+    const r = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: '' });
+    const i = r.findIndex((row) => row.some((c) => norm(c) === '성명') && row.some((c) => norm(c) === '주민등록번호'));
+    if (i >= 0) { rows = r; h = i; break; }
+  }
+  if (!rows) throw new Error('"성명"과 "주민등록번호" 머리글이 있는 시트를 찾지 못했어요.');
+  const head = rows[h].map(norm);
+  const col = (...names) => head.findIndex((c) => names.some((n) => c === n || c.startsWith(n)));
+  const C = { name: col('성명'), rrn: col('주민등록번호'), phone: col('연락처'), addr: col('주소'), dept: col('소속부서', '부서'), job: col('직위/담당업무', '직위', '담당업무'),
+    hire: col('입사일자', '입사일'), cs: col('계약시작일'), ce: col('계약만료일'), annual: col('연봉총액', '연봉') };
+  const dateOf = (s) => { const m = String(s || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/); return m && m[1] > '1900' ? `${m[1]}-${pad(m[2])}-${pad(m[3])}` : ''; };
+  const get = (r, k) => (C[k] >= 0 ? String(r[C[k]] ?? '').trim() : '');
+  const out = [];
+  for (const r of rows.slice(h + 1)) {
+    const name = get(r, 'name'); if (!name) continue;
+    const email = r.map((c) => String(c)).find((c) => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(c.trim())) || '';
+    const p = people.find((x) => x.name === name && x.status !== 'rejected');
+    out.push({ name, p, rrn: get(r, 'rrn'), phone: get(r, 'phone'), addr: get(r, 'addr'), dept: get(r, 'dept'), job: get(r, 'job'),
+      hire: dateOf(get(r, 'hire')), cs: dateOf(get(r, 'cs')), ce: dateOf(get(r, 'ce')), annual: num(get(r, 'annual')), email: email.trim() });
+  }
+  return out;
+}
+async function applyRosterRows(rows) {
+  let n = 0;
+  for (const x of rows.filter((y) => y.p)) {
+    const p = x.p;
+    const s = await getDoc(doc(db, 'salaries', p.uid)); const sal = s.exists() ? s.data() : {};
+    const next = { ...sal, updatedAt: serverTimestamp() };
+    if (x.rrn) next.rrn = x.rrn;
+    if (x.addr) next.address = x.addr;
+    if (x.cs) next.contractStart = x.cs;
+    next.contractEnd = x.ce || sal.contractEnd || '';
+    if (x.annual && !num(sal.annual)) {
+      Object.assign(next, { annual: x.annual, monthly: Math.round(x.annual / 12), annualDate: today(), annualBy: me.name + ' (명부 가져오기)' });
+      next.history = [...(sal.history || []), { annual: x.annual, date: today(), by: me.name }];
+    }
+    await setDoc(doc(db, 'salaries', p.uid), next);
+    const u = {};
+    if (x.phone && !p.phone) u.phone = x.phone;
+    if (x.dept && !p.dept) u.dept = x.dept;
+    if (x.job && !p.job) u.job = x.job;
+    if (x.hire && !p.hireDate) u.hireDate = x.hire;
+    if (x.email && !p.email && p.status === 'roster') u.email = x.email;
+    if (Object.keys(u).length) await updateDoc(doc(db, 'users', p.uid), u);
+    n++;
+  }
+  return n;
 }
 
 // ---------- 원내매뉴얼 ----------
