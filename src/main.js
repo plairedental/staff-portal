@@ -70,7 +70,7 @@ let signingUp = false;  // 가입 처리 중에는 자동 로그인 처리 건�
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const won = (n) => (n || n === 0) && n !== '' ? Number(n).toLocaleString('ko-KR') + '원' : '-';
 const can = {
-  hr: () => ['admin', 'doctor', 'chief', 'leader'].includes(me.role),
+  hr: () => me.role === 'admin',   // 직원 명부는 관리자만
   editHr: () => me.role === 'admin',
   editManual: () => ['admin', 'chief'].includes(me.role)
 };
@@ -169,8 +169,8 @@ function categories() {
       ['perf', '성과·인센티브', '📈', '팀별 목표 매출과 인센티브를 확인해요. (준비 중)']
     ] },
     { key: 'hr', label: '인사관리', icon: '👥', items: [
-      ['org', '조직도', '🏥', '부서·팀 구성과 담당 업무를 확인해요.'],
       ['work:schedule', '근무표', '🗓️', '그날 쉬는 사람을 달력으로 확인해요.'],
+      ['org', '조직도', '🏥', '부서·팀 구성과 담당 업무를 확인해요.'],
       ['work:leave', '내 연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.'],
       ['slips', '내 급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.']
     ], admin: [
