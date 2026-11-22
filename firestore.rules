@@ -48,12 +48,24 @@ service cloud.firestore {
         || hasRole(['admin', 'chief'])
         || (hasRole(['leader']) && resource.data.team == me().team)
       );
-      allow create: if active() && request.resource.data.uid == request.auth.uid
-        && request.resource.data.status == '대기'
-        && request.resource.data.team == me().get('team', '');
+      allow create: if hasRole(['admin', 'chief'])
+        || (active() && request.resource.data.uid == request.auth.uid
+            && request.resource.data.status == '대기'
+            && request.resource.data.team == me().get('team', ''));
       allow update: if hasRole(['admin', 'chief']);
       allow delete: if hasRole(['admin', 'chief'])
         || (active() && resource.data.uid == request.auth.uid && resource.data.status == '대기');
+    }
+
+    // 휴가 증빙서류: 본인과 관리자·총괄실장만 (진단서 등 민감 정보)
+    match /leaveFiles/{fid} {
+      allow read, delete: if active() && (resource.data.uid == request.auth.uid || hasRole(['admin', 'chief']));
+      allow create: if active() && (request.resource.data.uid == request.auth.uid || hasRole(['admin', 'chief']));
+      allow update: if hasRole(['admin', 'chief']);
+      match /chunks/{n} {
+        allow read, create, delete: if active() && (
+          get(/databases/$(database)/documents/leaveFiles/$(fid)).data.uid == request.auth.uid || hasRole(['admin', 'chief']));
+      }
     }
 
     // 근무표: 승인된 직원 모두 보기, 관리자·총괄실장 수정

@@ -408,3 +408,20 @@ table.cal { width: 100%; min-width: 640px; border-collapse: collapse; table-layo
 .staffT td, .staffT th { white-space: nowrap; }
 .staffT td a { color: var(--text); text-decoration: none; } .staffT td a:hover b { color: var(--c); text-decoration: underline; }
 .staffT .tag { margin-left: 0; }
+
+/* 휴가 신청 양식 */
+.lfGrid { display: grid; grid-template-columns: 1.2fr 1fr 1fr .6fr; gap: .6rem; }
+.lfGrid.adm { grid-template-columns: 1fr 1.2fr 1fr 1fr .6fr; }
+.note { background: #f2f7fd; border-radius: 8px; padding: .6rem .8rem; margin: .4rem 0 .8rem; font-size: .88rem; color: #2b4a6f; }
+.fileLink { margin-right: .6rem; color: var(--c); }
+.k-etc { background: #e0f2fe !important; color: #075985 !important; font-size: .68rem; }
+.lform h2 { text-align: center; letter-spacing: .4em; font-size: 1.5rem; margin: .5rem 0 1.2rem; }
+.lform .tall { height: 5rem; vertical-align: top; }
+.lform .center { text-align: center; } .lform .right { text-align: right; }
+.lform .sign { width: 60%; margin-left: auto; } .lform .sign td { height: 3.5rem; }
+@media print {
+  body.printModal > *:not(.printable) { display: none !important; }
+  body.printModal .printable { position: static; background: #fff; padding: 0; }
+  body.printModal .modalBox { box-shadow: none; max-width: none; }
+}
+@media (max-width: 760px) { .lfGrid, .lfGrid.adm { grid-template-columns: 1fr 1fr; } }
