@@ -624,3 +624,9 @@ aside.side button.mi.deep.on { color: var(--c); }
 .reqNow { background: #fff7cc; border-radius: 8px; padding: .6rem .9rem; }
 .pay input.rin { color: var(--muted); }
 .pay input.rin.manual { color: #c0392b; font-weight: 700; background: #fff4f2; }
+@media print {
+  /* 급여명세서: 표 오른쪽 테두리가 종이 끝에 걸리지 않게 */
+  .body, main { display: block !important; width: auto !important; }
+  .slip { padding: 0 3px; box-sizing: border-box; }
+  .slipTbl { width: calc(100% - 2px) !important; }
+}
