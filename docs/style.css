@@ -128,3 +128,4 @@ dl.info dt { color: var(--muted); } dl.info dd { margin: 0; }
 .k-연차 { background: #fdecef !important; color: #b83280 !important; }
 .k-반차 { background: #fff4e5 !important; color: #c05621 !important; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+.row input[type=checkbox] { flex: none; min-width: 0; width: auto; margin: 0; }

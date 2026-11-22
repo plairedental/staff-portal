@@ -248,47 +248,71 @@ async function renderHr() {
   if (sub?.uid) return renderPerson(sub.uid);
   const people = await loadPeople();
   const pending = people.filter((p) => p.status === 'pending');
-  const active = people.filter((p) => p.status === 'active');
-  const showWork = sub?.showAll ? active : active.filter((p) => (p.work || '재직') !== '퇴사');
+  const roster = people.filter((p) => p.status === 'roster');
+  const staff = people.filter((p) => p.status === 'active' || p.status === 'roster');
+  const shown = sub?.showAll ? staff : staff.filter((p) => (p.work || '재직') !== '퇴사');
+  const digits = (s) => String(s || '').replace(/\D/g, '');
+  const matchOf = (p) => roster.find((r) => r.email && p.email && r.email.toLowerCase() === p.email.toLowerCase())
+    || roster.find((r) => digits(r.phone) && digits(r.phone) === digits(p.phone))
+    || roster.find((r) => r.name && r.name === p.name);
 
   shell(`
-    <h1>인사관리</h1>
+    <div class="row between"><h1>인사관리</h1>${can.editHr() ? '<button id="add" class="primary">+ 직원 추가</button>' : ''}</div>
     ${can.editHr() && pending.length ? `
       <section class="card warn">
         <h2>가입 승인 대기 (${pending.length})</h2>
-        ${pending.map((p) => `
+        ${pending.map((p) => { const m = matchOf(p); return `
           <div class="pending">
             <div><b>${esc(p.name)}</b> <span class="muted sm">${esc(p.email)} ${esc(p.phone)}</span></div>
-            <div class="row">
+            <label class="sm">연결할 직원 명부
+              <select id="l_${p.uid}" data-link="${p.uid}">
+                <option value="">명부에 없음 (새 직원으로 등록)</option>
+                ${roster.map((r) => `<option value="${r.uid}" ${m?.uid === r.uid ? 'selected' : ''}>${esc(r.name)}${r.team ? ' · ' + esc(r.team) : ''}${r.phone ? ' · ' + esc(r.phone) : ''}</option>`).join('')}
+              </select></label>
+            <div class="row" id="rt_${p.uid}" style="${m ? 'display:none' : ''}">
               <select id="r_${p.uid}">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === 'staff' ? 'selected' : ''}>${v}</option>`).join('')}</select>
               <input id="t_${p.uid}" placeholder="팀 (예: 진료1팀)">
-              <button data-ok="${p.uid}" class="primary">승인</button>
-              <button data-no="${p.uid}" class="ghost">거절</button>
             </div>
-          </div>`).join('')}
+            <p class="muted sm" id="hint_${p.uid}">${m ? '명부에 입력해 둔 정보(역할, 팀, 입사일, 급여 등)가 이 계정으로 옮겨져요.' : ''}</p>
+            <div class="row"><button data-ok="${p.uid}" class="primary">승인</button><button data-no="${p.uid}" class="ghost">거절</button></div>
+          </div>`; }).join('')}
       </section>` : ''}
     <section class="card">
-      <div class="row between"><h2>직원 ${showWork.length}명</h2>
+      <div class="row between"><h2>직원 ${shown.length}명${roster.length ? ` <span class="muted sm">(미가입 ${roster.length})</span>` : ''}</h2>
         <label class="sm"><input type="checkbox" id="showAll" ${sub?.showAll ? 'checked' : ''}> 퇴사자 포함</label></div>
       <div class="list">
-        ${showWork.map((p) => `
+        ${shown.map((p) => `
           <button class="item" data-p="${p.uid}">
             <b>${esc(p.name)}</b>
             <span>${esc(p.job) || ''}${p.team ? ' · ' + esc(p.team) : ''}</span>
-            <span class="tag">${ROLES[p.role]}</span>
+            <span class="tag">${ROLES[p.role] || '직원'}</span>
+            ${p.status === 'roster' ? '<span class="tag gray">미가입</span>' : ''}
             ${(p.work && p.work !== '재직') ? `<span class="tag gray">${esc(p.work)}</span>` : ''}
           </button>`).join('') || '<p class="muted">아직 직원이 없어요.</p>'}
       </div>
     </section>`);
 
   $app.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => go('hr', { uid: b.dataset.p }));
+  document.getElementById('add')?.addEventListener('click', () => go('hr', { uid: 'new' }));
   document.getElementById('showAll').onchange = (e) => go('hr', { showAll: e.target.checked });
+  $app.querySelectorAll('[data-link]').forEach((s) => s.onchange = () => {
+    const uid = s.dataset.link;
+    document.getElementById('rt_' + uid).style.display = s.value ? 'none' : '';
+    document.getElementById('hint_' + uid).textContent = s.value ? '명부에 입력해 둔 정보(역할, 팀, 입사일, 급여 등)가 이 계정으로 옮겨져요.' : '';
+  });
   $app.querySelectorAll('[data-ok]').forEach((b) => b.onclick = async () => {
     const uid = b.dataset.ok;
-    await updateDoc(doc(db, 'users', uid), {
-      status: 'active', role: document.getElementById('r_' + uid).value,
-      team: val('t_' + uid), work: '재직'
-    });
+    const linkId = val('l_' + uid);
+    b.disabled = true;
+    if (linkId) {
+      const p = pending.find((x) => x.uid === uid);
+      const r = roster.find((x) => x.uid === linkId);
+      await linkRoster(r, p);
+    } else {
+      await updateDoc(doc(db, 'users', uid), {
+        status: 'active', role: document.getElementById('r_' + uid).value, team: val('t_' + uid), work: '재직'
+      });
+    }
     toast('승인했어요'); render();
   });
   $app.querySelectorAll('[data-no]').forEach((b) => b.onclick = async () => {
@@ -298,10 +322,36 @@ async function renderHr() {
   });
 }
 
+// 미리 입력한 명부(r)를 가입한 계정(p)에 연결: 정보·급여·근무표를 옮기고 명부는 지움
+async function linkRoster(r, p) {
+  const keep = ['name', 'job', 'dept', 'team', 'role', 'hireDate', 'work', 'annualAdjust'];
+  const data = { status: 'active', phone: r.phone || p.phone || '' };
+  keep.forEach((k) => { if (r[k] !== undefined && r[k] !== '') data[k] = r[k]; });
+  data.role ||= 'staff'; data.work ||= '재직';
+  await updateDoc(doc(db, 'users', p.uid), data);
+  const s = await getDoc(doc(db, 'salaries', r.uid));
+  if (s.exists()) { await setDoc(doc(db, 'salaries', p.uid), s.data()); await deleteDoc(doc(db, 'salaries', r.uid)); }
+  const sch = await getDocs(collection(db, 'schedules'));
+  for (const d of sch.docs) {
+    const x = d.data();
+    const inPeople = (x.people || []).some((q) => q.uid === r.uid);
+    if (!inPeople && !x.cells?.[r.uid]) continue;
+    x.people = (x.people || []).map((q) => q.uid === r.uid ? { ...q, uid: p.uid } : q);
+    if (x.cells?.[r.uid]) { x.cells[p.uid] = { ...(x.cells[p.uid] || {}), ...x.cells[r.uid] }; delete x.cells[r.uid]; }
+    await setDoc(d.ref, x);
+  }
+  await deleteDoc(doc(db, 'users', r.uid));
+}
+
 async function renderPerson(uid) {
-  const d = await getDoc(doc(db, 'users', uid));
-  if (!d.exists()) return go('hr');
-  const p = { uid, ...d.data() };
+  const isNew = uid === 'new';
+  let p = { uid, name: '', role: 'staff', status: 'roster' };
+  if (!isNew) {
+    const d = await getDoc(doc(db, 'users', uid));
+    if (!d.exists()) return go('hr');
+    p = { uid, ...d.data() };
+  }
+  const isRoster = p.status === 'roster';
   const back = '<button id="back" class="ghost">← 목록</button>';
 
   if (!can.editHr()) {
@@ -310,11 +360,12 @@ async function renderPerson(uid) {
     return;
   }
 
-  const s = await getDoc(doc(db, 'salaries', uid));
-  const sal = s.exists() ? s.data() : {};
-  const f = (id, label, v, type = 'text') => `<label>${label}<input id="${id}" type="${type}" value="${esc(v)}"></label>`;
+  let sal = {};
+  if (!isNew) { const s = await getDoc(doc(db, 'salaries', uid)); sal = s.exists() ? s.data() : {}; }
+  const f = (id, label, v, type = 'text') => `<label>${label}<input id="${id}" type="${type}" value="${esc(v ?? '')}"></label>`;
   shell(`
-    ${back}<h1>${esc(p.name)}</h1>
+    ${back}<h1>${isNew ? '직원 추가' : esc(p.name)}</h1>
+    ${isRoster ? '<p class="muted sm">아직 가입하지 않은 직원이에요. 나중에 이 직원이 가입하면 승인할 때 이 명부와 연결돼요. 이메일이나 연락처를 넣어 두면 자동으로 찾아줘요.</p>' : ''}
     <section class="card form">
       ${f('name', '이름', p.name)}
       ${f('job', '직무 (예: 치과위생사)', p.job)}
@@ -322,7 +373,7 @@ async function renderPerson(uid) {
       ${f('team', '팀', p.team)}
       <label>역할<select id="role">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${p.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       ${f('phone', '연락처', p.phone)}
-      <label>이메일<input value="${esc(p.email)}" disabled></label>
+      ${isRoster ? f('email', '이메일 (가입할 때 쓸 이메일)', p.email, 'email') : `<label>이메일<input value="${esc(p.email)}" disabled></label>`}
       ${f('hireDate', '입사일', p.hireDate, 'date')}
       <label>재직상태<select id="work">${WORK.map((w) => `<option ${(p.work || '재직') === w ? 'selected' : ''}>${w}</option>`).join('')}</select></label>
       ${f('annualAdjust', '연차 조정 (일, 예: 2 또는 -1)', p.annualAdjust ?? '', 'number')}
@@ -332,24 +383,31 @@ async function renderPerson(uid) {
       ${f('monthly', '월 급여 (원)', sal.monthly ?? '', 'number')}
       ${f('note', '메모 (예: 세전, 식대 포함)', sal.note ?? '')}
     </section>
-    <div class="row"><button id="save" class="primary">저장</button>
-      ${uid !== me.uid ? '<button id="del" class="ghost danger">계정 정보 삭제</button>' : ''}</div>`);
+    <div class="row"><button id="save" class="primary">${isNew ? '추가' : '저장'}</button>
+      ${!isNew && uid !== me.uid ? `<button id="del" class="ghost danger">${isRoster ? '명부에서 삭제' : '계정 정보 삭제'}</button>` : ''}</div>`);
 
   document.getElementById('back').onclick = () => go('hr');
   document.getElementById('save').onclick = async () => {
-    await updateDoc(doc(db, 'users', uid), {
+    if (!val('name')) return toast('이름을 입력해 주세요');
+    const data = {
       name: val('name'), job: val('job'), dept: val('dept'), team: val('team'),
       role: document.getElementById('role').value, phone: val('phone'),
       hireDate: val('hireDate'), work: document.getElementById('work').value,
       annualAdjust: val('annualAdjust') === '' ? 0 : Number(val('annualAdjust'))
-    });
+    };
+    if (isRoster) data.email = val('email');
+    let id = uid;
+    if (isNew) { const r = await addDoc(collection(db, 'users'), { ...data, status: 'roster', createdAt: serverTimestamp() }); id = r.id; }
+    else await updateDoc(doc(db, 'users', uid), data);
     const m = val('monthly');
-    await setDoc(doc(db, 'salaries', uid), { monthly: m === '' ? null : Number(m), note: val('note'), updatedAt: serverTimestamp() });
-    if (uid === me.uid) await loadMe(auth.currentUser, false);
-    toast('저장했어요'); go('hr');
+    if (m !== '' || val('note') || !isNew)
+      await setDoc(doc(db, 'salaries', id), { monthly: m === '' ? null : Number(m), note: val('note'), updatedAt: serverTimestamp() });
+    if (id === me.uid) await loadMe(auth.currentUser, false);
+    toast(isNew ? '추가했어요' : '저장했어요');
+    go('hr');
   };
   document.getElementById('del')?.addEventListener('click', async () => {
-    if (!confirm(`${p.name} 님의 정보를 삭제할까요? 퇴사자는 삭제 대신 재직상태를 '퇴사'로 바꾸는 걸 권해요.`)) return;
+    if (!confirm(`${p.name} 님의 정보를 삭제할까요?${isRoster ? '' : " 퇴사자는 삭제 대신 재직상태를 '퇴사'로 바꾸는 걸 권해요."}`)) return;
     await deleteDoc(doc(db, 'salaries', uid)).catch(() => {});
     await deleteDoc(doc(db, 'users', uid));
     toast('삭제했어요'); go('hr');
@@ -498,7 +556,7 @@ async function renderLeave(head, bindTabs) {
   const pending = leaves.filter((l) => l.status === '대기' && l.uid !== me.uid);
   const today = ymd(new Date());
   let people = [];
-  if (canApprove()) people = (await loadPeople()).filter((p) => p.status === 'active' && (p.work || '재직') !== '퇴사');
+  if (canApprove()) people = (await loadPeople()).filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
 
   const row = (l, actions = '') => `
     <div class="lv">
@@ -589,7 +647,7 @@ async function renderSchedule(head, bindTabs) {
   data.cells ||= {}; data.people ||= [];
   const editor = canApprove();
   if (editor) {   // 현재 재직자로 명단 맞추기
-    const act = (await loadPeople()).filter((p) => p.status === 'active' && (p.work || '재직') !== '퇴사');
+    const act = (await loadPeople()).filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
     act.forEach((p) => { const o = data.people.find((x) => x.uid === p.uid); if (o) { o.name = p.name; o.team = p.team || ''; } else data.people.push({ uid: p.uid, name: p.name, team: p.team || '' }); });
     data.people = data.people.filter((x) => act.some((p) => p.uid === x.uid) || Object.keys(data.cells[x.uid] || {}).length);
   }
