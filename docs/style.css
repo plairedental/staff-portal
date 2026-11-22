@@ -611,3 +611,8 @@ aside.side button.mi.deep.on { color: var(--c); }
   body.printModal .paper table.dt { width: 100% !important; box-sizing: border-box; }
 }
 .paper.cert > * { min-width: 0; max-width: 100%; }
+@media print {
+  /* 표 오른쪽 테두리가 종이 끝에 걸려 안 보이던 문제: 좌우 여유 조금 */
+  body.printModal .paper { padding: 0 3px !important; }
+  body.printModal .paper table.dt { width: calc(100% - 2px) !important; }
+}
