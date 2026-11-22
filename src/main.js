@@ -22,6 +22,44 @@ const db = getFirestore(app);
 const ROLES = { admin: '관리자', doctor: '원장', chief: '총괄실장', leader: '팀장', staff: '직원' };
 const WORK = ['재직', '휴직', '퇴사'];
 
+// ---------- 화면 설정 (글씨체·크기·색·이름·로고) ----------
+const FONTS = {
+  basic: { label: '기본', family: '-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif' },
+  pretendard: { label: '프리텐다드', family: 'Pretendard, sans-serif', css: 'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css' },
+  nanumgothic: { label: '나눔고딕', family: '"Nanum Gothic", sans-serif', css: 'https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700;800&display=swap' },
+  nanumsquare: { label: '나눔스퀘어', family: 'NanumSquare, sans-serif', css: 'https://cdn.jsdelivr.net/gh/moonspam/NanumSquare@2.0/nanumsquare.css' }
+};
+const SIZES = { normal: ['보통', 16], large: ['크게', 18], xlarge: ['아주 크게', 20] };
+const COLORS = ['#1f7a74', '#2c4a8a', '#2b6cb0', '#6b46c1', '#b83280', '#c05621', '#8a5a2b', '#4a5568'];
+const DEFAULT_THEME = { font: 'basic', size: 'normal', color: '#1f7a74', clinicName: '플레르치과', logo: '' };
+let theme = { ...DEFAULT_THEME, ...JSON.parse(localStorage.getItem('theme') || '{}') };
+
+function applyTheme() {
+  const f = FONTS[theme.font] || FONTS.basic;
+  if (f.css && !document.querySelector(`link[data-font="${theme.font}"]`)) {
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = f.css; l.dataset.font = theme.font;
+    document.head.appendChild(l);
+  }
+  const mySize = me?.fontSize && SIZES[me.fontSize] ? me.fontSize : theme.size;
+  const r = document.documentElement.style;
+  r.setProperty('--font', f.family);
+  r.setProperty('--c', theme.color);
+  r.fontSize = (SIZES[mySize] || SIZES.normal)[1] + 'px';
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme.color);
+  document.title = theme.clinicName + ' 직원포털';
+}
+async function loadTheme() {
+  try {
+    const d = await getDoc(doc(db, 'settings', 'app'));
+    theme = { ...DEFAULT_THEME, ...(d.exists() ? d.data() : {}) };
+    localStorage.setItem('theme', JSON.stringify(theme));
+  } catch (e) { console.warn('설정 불러오기 실패', e); }
+  applyTheme();
+}
+function brand(cls = '') {
+  return `<div class="brand ${cls}">${theme.logo ? `<img src="${theme.logo}" alt="">` : ''}${esc(theme.clinicName)}<span>직원포털</span></div>`;
+}
+
 const $app = document.getElementById('app');
 let me = null;          // 내 users 문서 (+uid)
 let view = 'my';        // my | hr | manual
@@ -62,7 +100,7 @@ function renderAuth(mode = 'login', msg = '') {
   const signup = mode === 'signup';
   $app.innerHTML = `
     <div class="auth">
-      <div class="brand">플레르치과<span>직원포털</span></div>
+      ${brand()}
       <form id="f" class="card">
         ${signup ? `<label>이름<input id="name" required autocomplete="name"></label>
                     <label>연락처<input id="phone" inputmode="tel" placeholder="010-0000-0000"></label>` : ''}
@@ -109,7 +147,7 @@ function renderWaiting() {
   const rejected = me.status === 'rejected';
   $app.innerHTML = `
     <div class="auth">
-      <div class="brand">플레르치과<span>직원포털</span></div>
+      ${brand()}
       <div class="card center">
         <p class="big">${rejected ? '가입이 승인되지 않았어요.' : '가입 신청이 완료됐어요.'}</p>
         <p>${rejected ? '관리자에게 문의해 주세요.' : '관리자가 승인하면 바로 사용할 수 있어요.<br>승인 후 이 화면을 새로고침해 주세요.'}</p>
@@ -123,10 +161,10 @@ function renderWaiting() {
 
 // ---------- 화면 틀 ----------
 function shell(content) {
-  const tabs = [['my', '내 정보', '👤'], ...(can.hr() ? [['hr', '인사관리', '👥']] : []), ['manual', '매뉴얼', '📘']];
+  const tabs = [['my', '내 정보', '👤'], ...(can.hr() ? [['hr', '인사관리', '👥']] : []), ['manual', '매뉴얼', '📘'], ...(me.role === 'admin' ? [['settings', '화면 설정', '🎨']] : [])];
   $app.innerHTML = `
     <header>
-      <div class="brand small">플레르치과<span>직원포털</span></div>
+      ${brand('small')}
       <nav>${tabs.map(([k, t, i]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}"><i>${i}</i>${t}</button>`).join('')}</nav>
       <div class="who">${esc(me.name)} · ${ROLES[me.role]} <button id="out" class="ghost sm">로그아웃</button></div>
     </header>
@@ -141,6 +179,7 @@ async function render() {
   try {
     if (view === 'hr' && can.hr()) return await renderHr();
     if (view === 'manual') return await renderManual();
+    if (view === 'settings' && me.role === 'admin') return renderSettings();
     view = 'my'; return await renderMy();
   } catch (e) {
     console.error(e);
@@ -172,6 +211,13 @@ async function renderMy() {
       <div class="row"><input id="phone" value="${esc(me.phone)}" placeholder="연락처"><button id="savePhone">연락처 저장</button></div>
     </section>
     <section class="card">
+      <h2>내 글씨 크기</h2>
+      <div class="chips" id="mySize">
+        ${[['', '기본'], ...Object.entries(SIZES).map(([k, v]) => [k, v[0]])].map(([k, t]) => `<button data-s="${k}" class="${(me.fontSize || '') === k ? 'on' : ''}">${t}</button>`).join('')}
+      </div>
+      <p class="muted sm">이 기기와 내 계정에만 적용돼요. '기본'은 관리자가 정한 크기예요.</p>
+    </section>
+    <section class="card">
       <h2>급여</h2>
       ${sal ? `<dl class="info"><dt>월 급여</dt><dd>${won(sal.monthly)}</dd>${sal.note ? `<dt>메모</dt><dd>${esc(sal.note)}</dd>` : ''}</dl>`
             : '<p class="muted">아직 등록된 급여 정보가 없어요.</p>'}
@@ -181,6 +227,11 @@ async function renderMy() {
     await updateDoc(doc(db, 'users', me.uid), { phone: val('phone') });
     me.phone = val('phone'); toast('저장했어요');
   };
+  $app.querySelectorAll('#mySize button').forEach((b) => b.onclick = async () => {
+    me.fontSize = b.dataset.s;
+    await updateDoc(doc(db, 'users', me.uid), { fontSize: me.fontSize });
+    applyTheme(); render();
+  });
 }
 
 // ---------- 인사관리 ----------
@@ -363,19 +414,98 @@ async function renderManualEdit(id) {
   };
 }
 
+// ---------- 화면 설정 (관리자) ----------
+function renderSettings() {
+  const t = { ...theme };
+  shell(`
+    <h1>화면 설정</h1>
+    <p class="muted sm">여기서 바꾼 내용은 모든 직원 화면에 적용돼요.</p>
+    <section class="card">
+      <h2>글씨체</h2>
+      <div class="chips" id="font">${Object.entries(FONTS).map(([k, f]) => `<button data-v="${k}" style="font-family:${f.family.replace(/"/g, "'")}">${f.label}</button>`).join('')}</div>
+      <h2 class="mt">기본 글씨 크기</h2>
+      <div class="chips" id="size">${Object.entries(SIZES).map(([k, v]) => `<button data-v="${k}">${v[0]}</button>`).join('')}</div>
+      <h2 class="mt">대표 색상</h2>
+      <div class="swatches" id="color">${COLORS.map((c) => `<button data-v="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
+        <label class="custom">직접 고르기<input type="color" id="colorPick" value="${t.color}"></label></div>
+    </section>
+    <section class="card form">
+      <h2>치과 이름과 로고</h2>
+      <label>치과 이름<input id="clinicName" value="${esc(t.clinicName)}"></label>
+      <label>로고 이미지 (정사각형 권장)<input type="file" id="logoFile" accept="image/*"></label>
+      <div class="row" id="logoRow">${t.logo ? `<img src="${t.logo}" class="logoPrev"><button id="logoDel" class="ghost danger sm">로고 빼기</button>` : '<span class="muted sm">로고 없음</span>'}</div>
+    </section>
+    <section class="card">
+      <h2>미리보기</h2>
+      <div id="preview" class="preview"></div>
+    </section>
+    <div class="row"><button id="save" class="primary">저장하고 모두에게 적용</button><button id="reset" class="ghost">처음 상태로</button></div>`);
+
+  const mark = () => {
+    for (const [id, key] of [['font', 'font'], ['size', 'size'], ['color', 'color']])
+      document.querySelectorAll(`#${id} button`).forEach((b) => b.classList.toggle('on', b.dataset.v === t[key]));
+    const f = FONTS[t.font];
+    if (f.css && !document.querySelector(`link[data-font="${t.font}"]`)) {
+      const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = f.css; l.dataset.font = t.font; document.head.appendChild(l);
+    }
+    document.getElementById('preview').innerHTML = `
+      <div style="font-family:${f.family.replace(/"/g, "'")};font-size:${SIZES[t.size][1]}px;--c:${t.color}">
+        <div class="brand small">${t.logo ? `<img src="${t.logo}" alt="">` : ''}${esc(t.clinicName)}<span>직원포털</span></div>
+        <p>환자분께 친절하게, 기구는 깨끗하게. 오늘도 수고 많으셨습니다.</p>
+        <button class="primary">버튼 예시</button>
+      </div>`;
+  };
+  ['font', 'size', 'color'].forEach((id) => document.querySelectorAll(`#${id} button`).forEach((b) => b.onclick = () => { t[id] = b.dataset.v; mark(); }));
+  document.getElementById('colorPick').oninput = (e) => { t.color = e.target.value; mark(); };
+  document.getElementById('clinicName').oninput = (e) => { t.clinicName = e.target.value.trim() || '치과'; mark(); };
+  document.getElementById('logoFile').onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    t.logo = await shrinkImage(file, 160);
+    document.getElementById('logoRow').innerHTML = `<img src="${t.logo}" class="logoPrev">`;
+    mark();
+  };
+  document.getElementById('logoDel')?.addEventListener('click', () => { t.logo = ''; document.getElementById('logoRow').innerHTML = '<span class="muted sm">로고 없음</span>'; mark(); });
+  document.getElementById('save').onclick = async () => {
+    await setDoc(doc(db, 'settings', 'app'), { font: t.font, size: t.size, color: t.color, clinicName: t.clinicName, logo: t.logo });
+    theme = t; localStorage.setItem('theme', JSON.stringify(theme)); applyTheme();
+    toast('모두에게 적용했어요'); render();
+  };
+  document.getElementById('reset').onclick = () => { Object.assign(t, DEFAULT_THEME); renderSettingsKeep(t); };
+  mark();
+}
+function renderSettingsKeep(t) { const old = theme; theme = t; renderSettings(); theme = old; }
+
+// 로고를 작게 줄여서 저장 (파일 저장소 없이 설정에 바로 저장)
+function shrinkImage(file, max) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL('image/png'));
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 // ---------- 시작 ----------
 async function loadMe(user, rerender = true) {
   const d = await getDoc(doc(db, 'users', user.uid));
   if (!d.exists()) { await signOut(auth); return renderAuth('login', '직원 정보가 없어요. 관리자에게 문의해 주세요.'); }
   me = { uid: user.uid, ...d.data() };
+  applyTheme();
   if (!rerender) return;
   if (me.status !== 'active') return renderWaiting();
   render();
 }
 
+applyTheme();
+loadTheme().then(() => document.querySelectorAll('.brand').forEach((b) => { if (!b.closest('.preview')) b.outerHTML = brand(b.classList.contains('small') ? 'small' : ''); }));
+
 onAuthStateChanged(auth, async (user) => {
   if (signingUp) return;
-  if (!user) { me = null; return renderAuth('login'); }
+  if (!user) { me = null; applyTheme(); return renderAuth('login'); }
   try { await loadMe(user); }
   catch (e) { console.error(e); renderAuth('login', '정보를 불러오지 못했어요: ' + (e.code || e.message)); }
 });

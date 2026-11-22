@@ -22,16 +22,22 @@ service cloud.firestore {
         && request.resource.data.role == 'staff'
         && request.resource.data.status == 'pending'
         && request.resource.data.keys().hasOnly(['name', 'email', 'phone', 'role', 'status', 'createdAt']);
-      // 관리자는 모두 수정, 본인은 연락처만
+      // 관리자는 모두 수정, 본인은 연락처·글씨 크기만
       allow update: if isAdmin()
         || (request.auth.uid == uid && active()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phone']));
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phone', 'fontSize']));
       allow delete: if isAdmin();
     }
 
     // 급여: 본인과 관리자만
     match /salaries/{uid} {
       allow read: if isAdmin() || (request.auth.uid == uid && active());
+      allow write: if isAdmin();
+    }
+
+    // 화면 설정: 로그인 화면에서도 보여야 해서 누구나 읽기, 관리자만 수정
+    match /settings/{id} {
+      allow read: if true;
       allow write: if isAdmin();
     }
 
