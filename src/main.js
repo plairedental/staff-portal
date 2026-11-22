@@ -62,7 +62,7 @@ function brand(cls = '') {
 
 const $app = document.getElementById('app');
 let me = null;          // 내 users 문서 (+uid)
-let view = 'my';        // my | hr | manual
+let view = 'home';      // home | my | hr | work | manual | perf | settings
 let sub = null;         // 하위 화면 상태
 let signingUp = false;  // 가입 처리 중에는 자동 로그인 처리 건너뜀
 
@@ -159,20 +159,83 @@ function renderWaiting() {
   document.getElementById('out').onclick = () => signOut(auth);
 }
 
-// ---------- 화면 틀 ----------
+// ---------- 화면 틀: 상단 카테고리 + 좌측 메뉴 ----------
+// 메뉴 항목: [키, 이름, 아이콘, 설명, 보이는 조건]
+function categories() {
+  return [
+    { key: 'biz', label: '경영·통계', icon: '📊', show: () => me.role === 'admin', items: [
+      ['perf', '성과·인센티브', '📈', '팀별 목표 매출과 인센티브를 확인해요. (준비 중)']
+    ] },
+    { key: 'hr', label: '인사관리', icon: '👥', items: [
+      ['my', '내 정보', '👤', '내 기본정보, 급여, 글씨 크기를 확인해요.'],
+      ['hr', '직원 명부', '📇', '직원 정보와 가입 승인을 관리해요.', can.hr],
+      ['work:schedule', '근무표', '🗓️', '월별 근무·휴무 일정을 확인해요.'],
+      ['work:leave', '연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.']
+    ] },
+    { key: 'manual', label: '원내매뉴얼', icon: '📘', items: [
+      ['manual', '매뉴얼 목록', '📘', '원내 업무 매뉴얼을 찾아봐요.'],
+      ['manual:new', '새 매뉴얼 쓰기', '✏️', '새 매뉴얼을 작성해요.', can.editManual]
+    ] }
+  ].filter((c) => !c.show || c.show())
+   .map((c) => ({ ...c, items: c.items.filter((i) => !i[4] || i[4]()) }));
+}
+const curKey = () => view === 'work' ? 'work:' + (sub?.tab || 'schedule') : (view === 'manual' && sub?.edit === null ? 'manual:new' : view);
+const catOf = (key) => categories().find((c) => c.items.some((i) => i[0] === key));
+function goKey(key) {
+  if (key === 'work:schedule') return go('work', { tab: 'schedule' });
+  if (key === 'work:leave') return go('work', { tab: 'leave' });
+  if (key === 'manual:new') return go('manual', { edit: null });
+  go(key);
+}
+
 function shell(content) {
-  const tabs = [['my', '내 정보', '👤'], ...(can.hr() ? [['hr', '인사관리', '👥']] : []), ['work', '연차·근무', '📅'], ['manual', '매뉴얼', '📘'], ...(me.role === 'admin' ? [['settings', '화면 설정', '🎨']] : [])];
+  const cats = categories();
+  const key = curKey();
+  const cat = catOf(key);
   $app.innerHTML = `
-    <header>
-      ${brand('small')}
-      <nav>${tabs.map(([k, t, i]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}"><i>${i}</i>${t}</button>`).join('')}</nav>
-      <div class="who">${esc(me.name)} · ${ROLES[me.role]} <button id="out" class="ghost sm">로그아웃</button></div>
+    <header class="top">
+      <a href="#" id="home" class="homeLink">${brand('small')}</a>
+      <nav class="cats">${cats.map((c) => `<button data-cat="${c.key}" class="${cat?.key === c.key ? 'on' : ''}"><i>${c.icon}</i>${c.label}</button>`).join('')}</nav>
+      <div class="who">
+        <a href="#" id="me">${esc(me.name)} <small>${ROLES[me.role]}</small></a>
+        ${me.role === 'admin' ? `<button id="set" class="ghost sm ${view === 'settings' ? 'on' : ''}" title="화면 설정">🎨</button>` : ''}
+        <button id="out" class="ghost sm">로그아웃</button>
+      </div>
     </header>
-    <main>${content}</main>`;
-  $app.querySelectorAll('nav button').forEach((b) => b.onclick = () => go(b.dataset.v));
+    <div class="body ${cat ? '' : 'noside'}">
+      ${cat ? `<aside class="side">
+        <div class="sideTitle">${cat.icon} ${cat.label}</div>
+        ${cat.items.map(([k, t, i]) => `<button data-k="${k}" class="${key === k ? 'on' : ''}"><i>${i}</i>${t}</button>`).join('')}
+      </aside>` : ''}
+      <main class="${key === 'work:schedule' ? 'wide' : ''}">${content}</main>
+    </div>`;
+  $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => goKey(cats.find((c) => c.key === b.dataset.cat).items[0][0]));
+  $app.querySelectorAll('[data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
+  document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
+  document.getElementById('me').onclick = (e) => { e.preventDefault(); go('my'); };
+  document.getElementById('set')?.addEventListener('click', () => go('settings'));
   document.getElementById('out').onclick = () => signOut(auth);
 }
-function go(v, s = null) { view = v; sub = s; render(); }
+function go(v, s = null) { view = v; sub = s; render(); window.scrollTo(0, 0); }
+
+function renderHome() {
+  const cats = categories();
+  shell(`
+    <div class="welcome">${theme.logo ? `<img src="${theme.logo}" alt="">` : `<span class="badge">${esc((theme.clinicName || '치')[0])}</span>`}
+      <p><b>${esc(me.name)}</b> ${ROLES[me.role]}님,<br>${esc(theme.clinicName)}에 오신 것을 환영합니다.</p></div>
+    ${cats.map((c) => `
+      <h2 class="catHead">${c.icon} ${c.label}</h2>
+      <div class="cards">${c.items.map(([k, t, i, d]) => `<button class="hcard" data-k="${k}"><span class="ic">${i}</span><b>${t}</b><small>${d}</small></button>`).join('')}</div>`).join('')}`);
+  $app.querySelectorAll('main [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
+}
+
+function renderPerf() {
+  shell(`<h1>성과·인센티브</h1>
+    <section class="card"><p class="big">준비 중이에요</p>
+      <p>다음 단계에서 만들 예정이에요.</p>
+      <ul class="muted"><li>전체·팀별 목표 매출 (인건비의 3~4배, 조정 가능)</li><li>덴트웹 엑셀을 올리면 팀별 매출·달성률 자동 계산</li><li>초과분 20% 팀 인센티브, 팀장 분배(최대 70%)</li><li>월별 인센티브 지급 내역</li></ul>
+    </section>`);
+}
 
 async function render() {
   shell('<p class="muted">불러오는 중…</p>');
@@ -181,7 +244,9 @@ async function render() {
     if (view === 'manual') return await renderManual();
     if (view === 'work') return await renderWork();
     if (view === 'settings' && me.role === 'admin') return renderSettings();
-    view = 'my'; return await renderMy();
+    if (view === 'perf' && me.role === 'admin') return renderPerf();
+    if (view === 'my') return await renderMy();
+    view = 'home'; return renderHome();
   } catch (e) {
     console.error(e);
     shell(`<p class="msg">불러오지 못했어요. (${esc(e.code || e.message)})</p>`);
@@ -542,8 +607,7 @@ async function stampLeave(l, code) {
 
 async function renderWork() {
   const tab = sub?.tab || 'schedule';
-  const head = `<h1>연차·근무</h1>
-    <div class="chips seg"><button data-t="schedule" class="${tab === 'schedule' ? 'on' : ''}">근무표</button><button data-t="leave" class="${tab === 'leave' ? 'on' : ''}">연차</button></div>`;
+  const head = `<h1>${tab === 'leave' ? '연차' : '근무표'}</h1>`;
   const bindTabs = () => $app.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => go('work', { tab: b.dataset.t }));
   if (tab === 'leave') return renderLeave(head, bindTabs);
   return renderSchedule(head, bindTabs);
