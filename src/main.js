@@ -1059,7 +1059,19 @@ async function renderLeaveAll() {
 
 // ---------- 급여 관리 (관리자) ----------
 // 세무사무소 급상여대장 항목 그대로
-const PAY_ITEMS = ['기본급', '연장수당', '상여', '여름휴가비', '교통비지원', '초과근무수당', '식대', '직책수당', '월차수당', '자가운전보조금', '야간근로수당', '미사용연차수당'];
+// 급여대장에서 읽는 전체 지급 항목 / 화면·명세서에 기본으로 보이는 항목
+const PAY_ALL = ['기본급', '연장수당', '상여', '여름휴가비', '교통비지원', '초과근무수당', '식대', '직책수당', '월차수당', '자가운전보조금', '야간근로수당', '미사용연차수당'];
+const PAY_ITEMS = ['기본급', '연장수당', '상여', '교통비지원', '초과근무수당', '식대', '미사용연차수당'];
+const hiddenPay = (r) => PAY_ALL.filter((k) => !PAY_ITEMS.includes(k)).reduce((s, k) => s + num(r.pay?.[k]), 0);
+// 회사 부담 4대보험: 직원 공제액을 바탕으로 계산 (2026년 기준)
+// 국민연금·건강보험·장기요양 = 직원과 같은 금액, 고용보험 = 직원분 × 1.15/0.9 (실업급여 0.9% + 고용안정·직업능력개발 0.25%, 150인 미만),
+// 산재보험 = (지급액 − 식대) × 산재 요율(관리자가 입력)
+function employerOf(r, accRate = 0) {
+  const d = r.ded || {}, r10 = (x) => Math.round(x / 10) * 10;
+  const x = { '국민연금': num(d['국민연금']), '건강보험': num(d['건강보험']), '장기요양보험': num(d['장기요양보험']),
+    '고용보험': r10(num(d['고용보험']) * 1.15 / 0.9), '산재보험': r10((payOf(r) - num(r.pay?.['식대'])) * accRate / 100) };
+  return { ...x, total: Object.values(x).reduce((a, b) => a + b, 0) };
+}
 const DED_ITEMS = ['국민연금', '건강보험', '장기요양보험', '고용보험', '소득세', '지방소득세', '농특세', '중도정산소득세', '중도정산지방소득세'];
 const ROLE_RANK = { admin: 0, doctor: 1, chief: 2, leader: 3, staff: 4 };
 const num = (v) => Number(String(v ?? '').replace(/[^\d.-]/g, '')) || 0;
@@ -1092,7 +1104,7 @@ async function parsePayrollExcel(file) {
     const sabun = norm(at(r, '사원번호')), name = norm(at(r, '성명'));
     if (!/^\d+$/.test(sabun) || !name) continue;
     const pay = {}, ded = {};
-    PAY_ITEMS.forEach((k) => { const v = num(at(r, k)); if (v) pay[k] = v; });
+    PAY_ALL.forEach((k) => { const v = num(at(r, k)); if (v) pay[k] = v; });
     DED_ITEMS.forEach((k) => { const v = num(at(r, k)); if (v) ded[k] = v; });
     const fix = (d) => { const s = String(d || '').trim().replace(/\./g, '-'); return /^\d{4}-\d{1,2}-\d{1,2}$/.test(s) ? s.split('-').map((x, i) => i ? pad(x) : x).join('-') : ''; };
     people.push({ sabun, name, pay, ded, hireDate: fix(at(r, '입사일')), quitDate: fix(at(r, '퇴사일')), job: String(at(r, '직위') || '').trim(), dept: String(at(r, '부서') || '').trim(),
@@ -1117,10 +1129,14 @@ async function renderPayroll() {
   if (sub?.imported) { Object.assign(rows, sub.imported.rows); payDate = sub.imported.payDate || payDate; }
   const sal = {};
   (await getDocs(collection(db, 'salaries'))).docs.forEach((d) => { sal[d.id] = d.data(); });
+  const conf = (await getDoc(doc(db, 'settings', 'payrollConf'))).data() || {};
+  let accRate = Number(conf.accRate || 0);
+  const retireOf = (uid) => sal[uid]?.annual ? Math.round(sal[uid].annual / 12) : 0;   // 퇴직연금: 연봉의 1/12
   const current = all.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
   const ids = [...new Set([...current.map((p) => p.uid), ...Object.keys(rows)])];
+  const pord = orgOrder(await loadOrg()); const prk = (n) => { const i = pord.findIndex((o) => o.name === n); return i < 0 ? 999 : i; };
   const people = ids.map((id) => all.find((p) => p.uid === id) || { uid: id, name: rows[id]?.name || '(삭제된 직원)', role: 'staff' })
-    .sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || (a.team || '').localeCompare(b.team || '', 'ko') || a.name.localeCompare(b.name, 'ko'));
+    .sort((a, b) => prk(a.name) - prk(b.name) || (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || a.name.localeCompare(b.name, 'ko'));
   people.forEach((p) => {
     rows[p.uid] ||= { pay: {}, ded: {}, status: '작성중' };
     rows[p.uid].pay ||= {}; rows[p.uid].ded ||= {};
@@ -1130,6 +1146,7 @@ async function renderPayroll() {
   let dirty = !!sub?.imported;
 
   const inp = (uid, grp, k, cls = '') => `<td class="${cls}"><input class="pin" data-u="${uid}" data-g="${grp}" data-k="${k}" inputmode="numeric" value="${num(rows[uid][grp]?.[k] ?? rows[uid][k]) ? comma(num(rows[uid][grp]?.[k] ?? rows[uid][k])) : ''}" placeholder="0"></td>`;
+  const anyHidden = Object.values(rows).some((r) => hiddenPay(r));
   const payCols = detail ? PAY_ITEMS : ['기본급'];
   const dedCols = detail ? DED_ITEMS : [];
   shell(`
@@ -1145,31 +1162,32 @@ async function renderPayroll() {
         ${snap.exists() ? '<button id="delMonth" class="ghost sm danger">🗑️ 이 달 전체 삭제</button>' : ''}
         <button id="detail" class="ghost sm">${detail ? '🙈 항목 간단히' : '👁 항목 자세히 보기'}</button>
       </div>
+      <label class="sm row">산재 요율 <input id="accRate" type="number" step="0.01" min="0" value="${accRate || ''}" placeholder="예: 0.7" style="width:5rem;flex:none">%</label>
       <label class="sm row">전체 상태 <select id="allStatus" style="width:auto;flex:none"><option value="">선택</option><option>작성중</option><option>확정</option><option>지급완료</option></select></label>
     </div>
     <div class="pay"><table>
       <thead>
         <tr><th rowspan="2">순번</th><th rowspan="2" class="nm">직원명</th><th rowspan="2">팀</th><th rowspan="2">직위</th>
           <th rowspan="2" class="hl">총 인건비<br><small>(지급+퇴직+지원)</small></th><th rowspan="2">실수령액</th>
-          <th colspan="${payCols.length + 1}" class="ga">지급 항목</th><th colspan="${dedCols.length + 1}" class="gb">공제 항목</th>
+          <th colspan="${payCols.length + 1 + (detail && anyHidden ? 1 : 0)}" class="ga">지급 항목</th><th colspan="${dedCols.length + 1}" class="gb">공제 항목</th>
           <th class="gc">퇴직</th><th class="gd">지원</th><th rowspan="2">메모</th><th rowspan="2">상태</th></tr>
-        <tr>${payCols.map((t) => `<th>${t}</th>`).join('')}<th class="ga">지급 계</th>${dedCols.map((t) => `<th>${t}</th>`).join('')}<th class="gb">공제 계</th>
-          <th class="gc">적립</th><th class="gd">회사부담</th></tr>
+        <tr>${payCols.map((t) => `<th>${t}</th>`).join('')}${detail && anyHidden ? '<th title="여름휴가비·직책수당·월차수당·자가운전보조금·야간근로수당">그 외</th>' : ''}<th class="ga">지급 계</th>${dedCols.map((t) => `<th>${t}</th>`).join('')}<th class="gb">공제 계</th>
+          <th class="gc">연봉÷12</th><th class="gd">4대보험 회사분</th></tr>
       </thead>
       <tbody>
         ${people.map((p, i) => `<tr data-row="${p.uid}">
           <td>${i + 1}</td><td class="nm"><a href="#" data-slip="${p.uid}" title="명세서 미리보기"><b>${esc(p.name)}</b></a>${p.status === 'roster' ? ' <span class="tag gray">미가입</span>' : ''}${(p.work === '퇴사' || rows[p.uid].quitDate) ? ' <span class="tag gray">퇴사</span>' : ''}</td>
           <td>${p.team ? `<span class="tag">${esc(p.team)}</span>` : '-'}</td><td>${esc(rows[p.uid].job || p.job || ROLES[p.role] || '')}</td>
           <td class="hl" data-t="cost"></td><td data-t="net"></td>
-          ${payCols.map((k) => inp(p.uid, 'pay', k)).join('')}<td class="ga" data-t="pay"></td>
+          ${payCols.map((k) => inp(p.uid, 'pay', k)).join('')}${detail && anyHidden ? `<td>${hiddenPay(rows[p.uid]) ? comma(hiddenPay(rows[p.uid])) : ''}</td>` : ''}<td class="ga" data-t="pay"></td>
           ${dedCols.map((k) => inp(p.uid, 'ded', k)).join('')}<td class="gb" data-t="ded"></td>
-          ${inp(p.uid, '', 'retire', 'gc')}${inp(p.uid, '', 'support', 'gd')}
+          <td class="gc" data-t="retire"></td><td class="gd" data-t="support"></td>
           <td><input class="pin memo" data-u="${p.uid}" data-g="" data-k="memo" value="${esc(rows[p.uid].memo || '')}"></td>
           <td><select data-u="${p.uid}" data-g="" data-k="status" class="st">${['작성중', '확정', '지급완료'].map((s) => `<option ${rows[p.uid].status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
         </tr>`).join('')}
       </tbody>
       <tfoot><tr><td colspan="4">합계 (${people.length}명)</td><td class="hl" data-f="cost"></td><td data-f="net"></td>
-        ${payCols.map((k) => `<td data-f="p_${k}"></td>`).join('')}<td class="ga" data-f="pay"></td>${dedCols.map((k) => `<td data-f="d_${k}"></td>`).join('')}<td class="gb" data-f="ded"></td>
+        ${payCols.map((k) => `<td data-f="p_${k}"></td>`).join('')}${detail && anyHidden ? '<td></td>' : ''}<td class="ga" data-f="pay"></td>${dedCols.map((k) => `<td data-f="d_${k}"></td>`).join('')}<td class="gb" data-f="ded"></td>
         <td class="gc" data-f="retire"></td><td class="gd" data-f="support"></td><td colspan="2"></td></tr></tfoot>
     </table></div>
     <div class="kpis">
@@ -1178,15 +1196,22 @@ async function renderPayroll() {
       <div class="kpi"><span>실수령 총액</span><b id="fNet"></b></div>
       <div class="kpi"><span>1인 평균 인건비</span><b id="fAvg"></b></div>
     </div>
+    <div class="card sm" id="insSum"></div>
     <div class="row"><button id="savePay" class="primary">저장</button><span class="muted sm" id="dirty">${dirty ? '엑셀 내용을 불러왔어요. 확인 후 저장을 눌러 주세요.' : ''}</span></div>
     <p class="muted sm">· 상태가 <b>확정</b> 또는 <b>지급완료</b>인 직원은 저장하면 본인 계정의 <b>급여명세서</b>에 바로 보여요.<br>
-      · 총 인건비 = 지급 계 + 퇴직 적립 + 회사 부담(4대보험 등). 퇴직·회사부담은 세무 대장에 없어서 직접 넣어 주세요.<br>
+      · 총 인건비 = 지급 계 + <b>퇴직연금(연봉÷12, 자동)</b> + <b>4대보험 회사 부담분(자동)</b>. 퇴직연금은 직원 명부에 연봉이 있어야 계산돼요.<br>
+      · 4대보험 회사분 = 국민연금·건강보험·장기요양은 직원 공제액과 같은 금액, 고용보험은 직원분×1.15/0.9, 산재보험은 (지급액−식대)×산재 요율. 숫자에 마우스를 올리면 항목별 금액이 보여요.<br>
       · 직원 이름을 누르면 명세서를 미리 볼 수 있어요.</p>`);
 
   const recalc = () => {
     const t = { cost: 0, net: 0, pay: 0, ded: 0, retire: 0, support: 0 };
     people.forEach((p) => {
       const r = rows[p.uid], tr = $app.querySelector(`tr[data-row="${p.uid}"]`);
+      const er = employerOf(r, accRate);
+      r.retire = retireOf(p.uid); r.support = er.total;
+      tr.querySelector('[data-t=retire]').textContent = r.retire ? comma(r.retire) : '-';
+      const sc = tr.querySelector('[data-t=support]'); sc.textContent = comma(er.total);
+      sc.title = Object.entries(er).filter(([k]) => k !== 'total').map(([k, v]) => `${k} ${comma(v)}`).join('\n');
       tr.querySelector('[data-t=pay]').textContent = comma(payOf(r));
       tr.querySelector('[data-t=ded]').textContent = comma(dedOf(r));
       tr.querySelector('[data-t=net]').textContent = comma(netOf(r));
@@ -1196,6 +1221,13 @@ async function renderPayroll() {
       dedCols.forEach((k) => t['d_' + k] = (t['d_' + k] || 0) + num(r.ded[k]));
     });
     Object.entries(t).forEach(([k, v]) => { const el = $app.querySelector(`[data-f="${k}"]`); if (el) el.textContent = comma(v); });
+    const ins = { hl: 0, pen: 0, emp: 0, acc: 0 };
+    people.forEach((p) => { const r = rows[p.uid], d = r.ded || {}, er = employerOf(r, accRate);
+      ins.hl += num(d['건강보험']) + num(d['장기요양보험']) + er['건강보험'] + er['장기요양보험'];
+      ins.pen += num(d['국민연금']) + er['국민연금']; ins.emp += num(d['고용보험']) + er['고용보험']; ins.acc += er['산재보험']; });
+    document.getElementById('insSum').innerHTML = `<b>이번 달 4대보험 예상 납부액 (직원분 + 회사분, 직원 급여 기준)</b><br>
+      건강보험+장기요양 <b>${comma(ins.hl)}원</b> · 국민연금 <b>${comma(ins.pen)}원</b> · 고용보험 <b>${comma(ins.emp)}원</b>${accRate ? ` · 산재보험 <b>${comma(ins.acc)}원</b>` : ' · 산재보험은 요율을 넣으면 계산돼요'}
+      <br><span class="muted">대표원장님 본인 보험료(전액 본인 부담)는 직원 급여대장에 없어서 여기에는 빠져 있어요. 실제 고지서 금액과 비교할 때 참고해 주세요.</span>`;
     document.getElementById('fCost').textContent = comma(t.cost) + '원';
     document.getElementById('fPay').textContent = comma(t.pay) + '원';
     document.getElementById('fNet').textContent = comma(t.net) + '원';
@@ -1213,6 +1245,10 @@ async function renderPayroll() {
   });
   recalc();
   document.getElementById('payDate').oninput = (e) => { payDate = e.target.value; mark(); };
+  document.getElementById('accRate').onchange = async (e) => {
+    accRate = Number(e.target.value) || 0; recalc();
+    await setDoc(doc(db, 'settings', 'payrollConf'), { accRate, updatedAt: serverTimestamp() }); toast('산재 요율을 저장했어요');
+  };
   const leave = (fn) => () => { if (dirty && !confirm('저장하지 않은 변경이 있어요. 이동할까요?')) return; fn(); };
   document.getElementById('prev').onclick = leave(() => go('payroll', { month: shift(-1), detail }));
   document.getElementById('next').onclick = leave(() => go('payroll', { month: shift(1), detail }));
@@ -1269,7 +1305,7 @@ async function renderPayroll() {
       const p = all.find((q) => q.name === x.name && q.status !== 'rejected');
       if (!p) continue;
       const old = prevRows[p.uid] || {};
-      imported.rows[p.uid] = { pay: x.pay, ded: x.ded, retire: old.retire || 0, support: old.support || 0, memo: old.memo || '', status: '확정',
+      imported.rows[p.uid] = { pay: x.pay, ded: x.ded, memo: old.memo || '', status: '확정',
         name: x.name, job: x.job, dept: x.dept, hireDate: x.hireDate, quitDate: x.quitDate };
       const calc = imported.rows[p.uid];
       if (x.fileNet && Math.abs(netOf(calc) - x.fileNet) > 1) msgs.push(`⚠️ ${x.name}: 엑셀 실수령액(${comma(x.fileNet)})과 계산값(${comma(netOf(calc))})이 달라요. 확인해 주세요.`);
@@ -1301,7 +1337,7 @@ function slipData(month, payDate, p, r) {
   return {
     uid: p.uid, month, payDate: payDate || '', clinicName: theme.clinicName,
     name: p.name, dept: r.dept || p.dept || '', job: r.job || p.job || '', hireDate: r.hireDate || p.hireDate || '',
-    pay: PAY_ITEMS.map((k) => [k, num(r.pay?.[k])]), ded: DED_ITEMS.map((k) => [k, num(r.ded?.[k])]),
+    pay: PAY_ALL.filter((k) => PAY_ITEMS.includes(k) || num(r.pay?.[k])).map((k) => [k, num(r.pay?.[k])]), ded: DED_ITEMS.map((k) => [k, num(r.ded?.[k])]),
     payTotal: payOf(r), dedTotal: dedOf(r), net: netOf(r)
   };
 }
