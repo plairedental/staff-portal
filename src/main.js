@@ -549,6 +549,7 @@ async function renderPerson(uid) {
       ${f('leaveDate', '퇴사일 (퇴사자만)', p.leaveDate, 'date')}
       ${f('annualAdjust', '연차 조정 (일, 예: 2 또는 -1)', p.annualAdjust ?? '', 'number')}
       <label class="row sm"><input type="checkbox" id="noLeave" ${noLeave(p, tmP) ? 'checked' : ''}> 연차 대상 아님 (연차 현황 목록에서 빼기)</label>
+      <label class="row sm"><input type="checkbox" id="noPay" ${noPay(p, tmP) ? 'checked' : ''}> 급여 관리 대상 아님 (직원 급여 관리에서 빼기)</label>
     </section>
     <section class="card form">
       <h2>연봉 <span class="muted sm">(본인과 관리자만 볼 수 있어요)</span></h2>
@@ -582,7 +583,8 @@ async function renderPerson(uid) {
       role: document.getElementById('role').value, phone: val('phone'),
       hireDate: val('hireDate'), work: document.getElementById('work').value, leaveDate: val('leaveDate'),
       annualAdjust: val('annualAdjust') === '' ? 0 : Number(val('annualAdjust')),
-      noLeave: document.getElementById('noLeave').checked
+      noLeave: document.getElementById('noLeave').checked,
+      noPay: document.getElementById('noPay').checked
     };
     if (isRoster) data.email = val('email');
     let id = uid;
@@ -1651,6 +1653,7 @@ const ddayOf = (s) => { const t = new Date(); t.setHours(0, 0, 0, 0); return Mat
 const ddayCls = (n) => n <= 30 ? 'dd-red' : n <= 60 ? 'dd-yellow' : '';
 const ddayTxt = (n) => n > 0 ? `D-${n}` : n === 0 ? 'D-DAY' : `D+${-n}`;
 // 연차 대상 아님: 직원 명부에서 체크했거나, 대표원장
+const noPay = (u, titleMap = {}) => u.noPay === true || (u.noPay === undefined && /대표원장/.test(`${u.job || ''} ${titleMap[u.name] || ''}`));   // 급여 관리에서 빼기
 const noLeave = (u, titleMap = {}) => u.noLeave === true || (u.noLeave === undefined && /대표원장/.test(`${u.job || ''} ${titleMap[u.name] || ''}`));
 
 // 근로기준법 기준 연차 (입사일 기준, 출근율 80% 이상 가정)
@@ -2131,9 +2134,14 @@ async function renderPayroll() {
   let accRate = Number(conf.accRate || 0);
   const monthlyOf = (uid) => sal[uid]?.annual ? Math.round(sal[uid].annual / 12) : num(sal[uid]?.monthly);
   const retireOf = (uid) => { const m = monthlyOf(uid); return m ? Math.round(m / 12) : 0; };   // 퇴직연금: 세전 월급여의 1/12
-  const current = all.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
-  const ids = [...new Set([...current.map((p) => p.uid), ...Object.keys(rows)])];
-  const pord = orgOrder(await loadOrg()); const prk = (n) => { const i = pord.findIndex((o) => o.name === n); return i < 0 ? 999 : i; };
+  const orgData = await loadOrg();
+  const tmap = {}; (orgData.groups || []).forEach((g) => (g.members || []).forEach((m) => { tmap[m.name] = m.title || ''; }));
+  const skip = new Set(all.filter((p) => noPay(p, tmap)).map((p) => p.uid));
+  const hasData = (r) => r && (payOf(r) || dedOf(r));
+  const current = all.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사' && !skip.has(p.uid));
+  const ids = [...new Set([...current.map((p) => p.uid), ...Object.keys(rows).filter((id) => !skip.has(id) || hasData(rows[id]))])];
+  Object.keys(rows).forEach((id) => { if (!ids.includes(id)) delete rows[id]; });
+  const pord = orgOrder(orgData); const prk = (n) => { const i = pord.findIndex((o) => o.name === n); return i < 0 ? 999 : i; };
   const people = ids.map((id) => all.find((p) => p.uid === id) || { uid: id, name: rows[id]?.name || '(삭제된 직원)', role: 'staff' })
     .sort((a, b) => prk(a.name) - prk(b.name) || (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || a.name.localeCompare(b.name, 'ko'));
   people.forEach((p) => {
