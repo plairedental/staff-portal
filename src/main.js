@@ -172,6 +172,7 @@ function categories() {
       ['work:schedule', '근무표', '🗓️', '월별 근무·휴무 일정을 확인해요.'],
       ['work:leave', '내 연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.'],
       ['work:all', '직원 연차 현황', '📋', '직원 전체의 연차 사용 내역을 확인해요.', canApprove],
+      ['slips', '급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.'],
       ['payroll', '급여 관리', '💰', '월별 급여와 총 인건비를 한눈에 봐요.', () => me.role === 'admin']
     ] },
     { key: 'manual', label: '원내매뉴얼', icon: '📘', items: [
@@ -249,6 +250,7 @@ async function render() {
     if (view === 'settings' && me.role === 'admin') return renderSettings();
     if (view === 'perf' && me.role === 'admin') return renderPerf();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
+    if (view === 'slips') return await renderMySlips();
     if (view === 'my') return await renderMy();
     view = 'home'; return renderHome();
   } catch (e) {
@@ -415,6 +417,12 @@ async function linkRoster(r, p) {
     if (!x.rows?.[r.uid]) continue;
     x.rows[p.uid] = x.rows[r.uid]; delete x.rows[r.uid];
     await setDoc(d.ref, x);
+  }
+  const slips = await getDocs(query(collection(db, 'payslips'), where('uid', '==', r.uid)));
+  for (const d of slips.docs) {
+    const x = d.data();
+    await setDoc(doc(db, 'payslips', `${x.month}_${p.uid}`), { ...x, uid: p.uid });
+    await deleteDoc(d.ref);
   }
   await deleteDoc(doc(db, 'users', r.uid));
 }
@@ -828,111 +836,277 @@ async function renderLeaveAll() {
 }
 
 // ---------- 급여 관리 (관리자) ----------
-const PAY_A = [['base', '기본급'], ['meal', '식대'], ['position', '직책수당'], ['overtime', '연장수당'], ['night', '야간수당'], ['annual', '연차수당'], ['bonus', '상여금'], ['transport', '교통비'], ['other', '기타수당']];
-const PAY_X = [['deduct', '공제 계', 'b'], ['retire', '퇴직 계', 'c'], ['support', '지원 계', 'd']];
+// 세무사무소 급상여대장 항목 그대로
+const PAY_ITEMS = ['기본급', '연장수당', '상여', '여름휴가비', '교통비지원', '초과근무수당', '식대', '직책수당', '월차수당', '자가운전보조금', '야간근로수당', '미사용연차수당'];
+const DED_ITEMS = ['국민연금', '건강보험', '장기요양보험', '고용보험', '소득세', '지방소득세', '농특세', '중도정산소득세', '중도정산지방소득세'];
 const ROLE_RANK = { admin: 0, doctor: 1, chief: 2, leader: 3, staff: 4 };
 const num = (v) => Number(String(v ?? '').replace(/[^\d.-]/g, '')) || 0;
 const comma = (n) => Math.round(n).toLocaleString('ko-KR');
-const sumA = (r) => PAY_A.reduce((s, [k]) => s + num(r[k]), 0);
-const totalCost = (r) => sumA(r) + num(r.retire) + num(r.support);
-const netPay = (r) => sumA(r) - num(r.deduct);
+const payOf = (r) => Object.values(r.pay || {}).reduce((s, v) => s + num(v), 0);
+const dedOf = (r) => Object.values(r.ded || {}).reduce((s, v) => s + num(v), 0);
+const netOf = (r) => payOf(r) - dedOf(r);
+const costOf = (r) => payOf(r) + num(r.retire) + num(r.support);
+const monthTitle = (month) => { const [y, m] = month.split('-').map(Number); return `${y}년 ${m}월분`; };
+
+// 급상여대장 엑셀 읽기: 3줄이 한 직원 (사번·성명·지급·공제 / 입사일·직위·… / 퇴사일·부서·합계)
+async function parsePayrollExcel(file) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.read(await file.arrayBuffer());
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+  const norm = (v) => String(v ?? '').replace(/\s+/g, '');
+  const flat = rows.slice(0, 15).map((r) => r.join(' ')).join(' ');
+  const mm = flat.match(/(\d{4})\s*년\s*(\d{1,2})\s*월분/) || flat.match(/(\d{4})\s*년\s*(\d{1,2})\s*월/);
+  const pd = flat.match(/지급일\s*:?\s*(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  const month = mm ? `${mm[1]}-${pad(mm[2])}` : null;
+  const payDate = pd ? `${pd[1]}-${pad(pd[2])}-${pad(pd[3])}` : '';
+  const h = rows.findIndex((r) => r.some((c) => norm(c) === '사원번호'));
+  if (h < 0) throw new Error('"사원번호" 머리글을 찾지 못했어요. 급상여대장 엑셀이 맞는지 확인해 주세요.');
+  const pos = {};   // 항목 이름 → [줄 위치, 열]
+  for (let off = 0; off < 3; off++) (rows[h + off] || []).forEach((c, col) => { const k = norm(c); if (k) pos[k] = [off, col]; });
+  const at = (r, k) => pos[k] ? (rows[r + pos[k][0]] || [])[pos[k][1]] : '';
+  const people = [];
+  for (let r = h + 3; r < rows.length; r++) {
+    const sabun = norm(at(r, '사원번호')), name = norm(at(r, '성명'));
+    if (!/^\d+$/.test(sabun) || !name) continue;
+    const pay = {}, ded = {};
+    PAY_ITEMS.forEach((k) => { const v = num(at(r, k)); if (v) pay[k] = v; });
+    DED_ITEMS.forEach((k) => { const v = num(at(r, k)); if (v) ded[k] = v; });
+    const fix = (d) => { const s = String(d || '').trim().replace(/\./g, '-'); return /^\d{4}-\d{1,2}-\d{1,2}$/.test(s) ? s.split('-').map((x, i) => i ? pad(x) : x).join('-') : ''; };
+    people.push({ sabun, name, pay, ded, hireDate: fix(at(r, '입사일')), quitDate: fix(at(r, '퇴사일')), job: String(at(r, '직위') || '').trim(), dept: String(at(r, '부서') || '').trim(),
+      filePay: num(at(r, '지급합계')), fileDed: num(at(r, '공제합계')), fileNet: num(at(r, '차인지급액')) });
+    r += 2;
+  }
+  if (!people.length) throw new Error('직원 급여 내용을 찾지 못했어요.');
+  return { month, payDate, people };
+}
 
 async function renderPayroll() {
   const now = new Date();
   const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
   const [y, m] = month.split('-').map(Number);
   const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
-  const people = (await loadPeople()).filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사')
-    .sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || (a.team || '').localeCompare(b.team || '', 'ko') || a.name.localeCompare(b.name, 'ko'));
+  const all = await loadPeople();
   const ref = doc(db, 'payroll', month);
   const snap = await getDoc(ref);
-  const saved = snap.exists() ? snap.data().rows || {} : {};
+  const saved = snap.exists() ? snap.data() : {};
+  const rows = JSON.parse(JSON.stringify(saved.rows || {}));
+  let payDate = saved.payDate || '';
+  if (sub?.imported) { Object.assign(rows, sub.imported.rows); payDate = sub.imported.payDate || payDate; }
   const sal = {};
   (await getDocs(collection(db, 'salaries'))).docs.forEach((d) => { sal[d.id] = d.data(); });
-  const rows = {};
-  people.forEach((p) => { rows[p.uid] = saved[p.uid] ? { ...saved[p.uid] } : { base: sal[p.uid]?.monthly || 0, status: '작성중' }; });
-  let dirty = false;
+  const current = all.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
+  const ids = [...new Set([...current.map((p) => p.uid), ...Object.keys(rows)])];
+  const people = ids.map((id) => all.find((p) => p.uid === id) || { uid: id, name: rows[id]?.name || '(삭제된 직원)', role: 'staff' })
+    .sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || (a.team || '').localeCompare(b.team || '', 'ko') || a.name.localeCompare(b.name, 'ko'));
+  people.forEach((p) => {
+    rows[p.uid] ||= { pay: sal[p.uid]?.monthly ? { '기본급': sal[p.uid].monthly } : {}, ded: {}, status: '작성중' };
+    rows[p.uid].pay ||= {}; rows[p.uid].ded ||= {};
+  });
+  const detail = sub?.detail ?? false;
+  const warn = sub?.warn || '';
+  let dirty = !!sub?.imported;
 
-  const cell = (uid, k, cls = '') => `<td class="${cls}"><input class="pin" data-u="${uid}" data-k="${k}" inputmode="numeric" value="${num(rows[uid][k]) ? comma(num(rows[uid][k])) : ''}" placeholder="0"></td>`;
+  const inp = (uid, grp, k, cls = '') => `<td class="${cls}"><input class="pin" data-u="${uid}" data-g="${grp}" data-k="${k}" inputmode="numeric" value="${num(rows[uid][grp]?.[k] ?? rows[uid][k]) ? comma(num(rows[uid][grp]?.[k] ?? rows[uid][k])) : ''}" placeholder="0"></td>`;
+  const payCols = detail ? PAY_ITEMS : ['기본급'];
+  const dedCols = detail ? DED_ITEMS : [];
   shell(`
     <div class="row between"><div><p class="eyebrow">PAYROLL</p><h1>급여 관리</h1></div>
-      <div class="row"><button id="prev" class="ghost">◀</button><b class="monthLbl">${y}년 ${m}월</b><button id="next" class="ghost">▶</button></div></div>
-    <div class="row between"><span class="muted sm">총 ${people.length}명 · 관리자만 볼 수 있어요 · 칸을 눌러 바로 입력하세요</span>
-      <div class="row"><button id="copyPrev" class="ghost sm">📋 전월 불러오기</button></div></div>
+      <div class="row"><button id="prev" class="ghost">◀</button><div class="monthBox"><b>${monthTitle(month)} 급여</b>
+        <label class="sm">지급일 <input type="date" id="payDate" value="${payDate}"></label></div><button id="next" class="ghost">▶</button></div></div>
+    ${warn ? `<div class="card warn sm">${warn}</div>` : ''}
+    <div class="row between toolbar">
+      <div class="row">
+        <label class="upload primary">📤 세무 급여대장 엑셀 올리기<input type="file" id="xls" accept=".xlsx,.xls" hidden></label>
+        <button id="copyPrev" class="ghost sm">📋 전월 불러오기</button>
+        <button id="detail" class="ghost sm">${detail ? '🙈 항목 간단히' : '👁 항목 자세히 보기'}</button>
+      </div>
+      <label class="sm row">전체 상태 <select id="allStatus" style="width:auto;flex:none"><option value="">선택</option><option>작성중</option><option>확정</option><option>지급완료</option></select></label>
+    </div>
     <div class="pay"><table>
       <thead>
-        <tr><th rowspan="2">순번</th><th rowspan="2" class="nm">직원명</th><th rowspan="2">팀</th><th rowspan="2">역할</th>
-          <th rowspan="2" class="hl">총 인건비<br><small>(A+C+D)</small></th><th rowspan="2">실수령액<br><small>(A−B)</small></th>
-          <th colspan="${PAY_A.length + 1}" class="ga">지급항목 (A)</th><th class="gb">공제 (B)</th><th class="gc">퇴직 (C)</th><th class="gd">지원 (D)</th>
-          <th rowspan="2">메모</th><th rowspan="2">상태</th></tr>
-        <tr>${PAY_A.map(([, t]) => `<th>${t}</th>`).join('')}<th class="ga">지급 계</th>${PAY_X.map(([, t, g]) => `<th class="g${g}">${t}</th>`).join('')}</tr>
+        <tr><th rowspan="2">순번</th><th rowspan="2" class="nm">직원명</th><th rowspan="2">팀</th><th rowspan="2">직위</th>
+          <th rowspan="2" class="hl">총 인건비<br><small>(지급+퇴직+지원)</small></th><th rowspan="2">실수령액</th>
+          <th colspan="${payCols.length + 1}" class="ga">지급 항목</th><th colspan="${dedCols.length + 1}" class="gb">공제 항목</th>
+          <th class="gc">퇴직</th><th class="gd">지원</th><th rowspan="2">메모</th><th rowspan="2">상태</th></tr>
+        <tr>${payCols.map((t) => `<th>${t}</th>`).join('')}<th class="ga">지급 계</th>${dedCols.map((t) => `<th>${t}</th>`).join('')}<th class="gb">공제 계</th>
+          <th class="gc">적립</th><th class="gd">회사부담</th></tr>
       </thead>
       <tbody>
         ${people.map((p, i) => `<tr data-row="${p.uid}">
-          <td>${i + 1}</td><td class="nm"><b>${esc(p.name)}</b></td><td>${p.team ? `<span class="tag">${esc(p.team)}</span>` : '-'}</td><td>${esc(p.job || ROLES[p.role])}</td>
+          <td>${i + 1}</td><td class="nm"><a href="#" data-slip="${p.uid}" title="명세서 미리보기"><b>${esc(p.name)}</b></a>${p.status === 'roster' ? ' <span class="tag gray">미가입</span>' : ''}${(p.work === '퇴사' || rows[p.uid].quitDate) ? ' <span class="tag gray">퇴사</span>' : ''}</td>
+          <td>${p.team ? `<span class="tag">${esc(p.team)}</span>` : '-'}</td><td>${esc(rows[p.uid].job || p.job || ROLES[p.role] || '')}</td>
           <td class="hl" data-t="cost"></td><td data-t="net"></td>
-          ${PAY_A.map(([k]) => cell(p.uid, k)).join('')}<td class="ga" data-t="a"></td>
-          ${PAY_X.map(([k, , g]) => cell(p.uid, k, 'g' + g)).join('')}
-          <td><input class="pin memo" data-u="${p.uid}" data-k="memo" value="${esc(rows[p.uid].memo || '')}"></td>
-          <td><select data-u="${p.uid}" data-k="status" class="st">${['작성중', '확정', '지급완료'].map((s) => `<option ${rows[p.uid].status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
+          ${payCols.map((k) => inp(p.uid, 'pay', k)).join('')}<td class="ga" data-t="pay"></td>
+          ${dedCols.map((k) => inp(p.uid, 'ded', k)).join('')}<td class="gb" data-t="ded"></td>
+          ${inp(p.uid, '', 'retire', 'gc')}${inp(p.uid, '', 'support', 'gd')}
+          <td><input class="pin memo" data-u="${p.uid}" data-g="" data-k="memo" value="${esc(rows[p.uid].memo || '')}"></td>
+          <td><select data-u="${p.uid}" data-g="" data-k="status" class="st">${['작성중', '확정', '지급완료'].map((s) => `<option ${rows[p.uid].status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
         </tr>`).join('')}
       </tbody>
-      <tfoot><tr><td colspan="4">합계</td><td class="hl" data-f="cost"></td><td data-f="net"></td>
-        ${PAY_A.map(([k]) => `<td data-f="${k}"></td>`).join('')}<td class="ga" data-f="a"></td>${PAY_X.map(([k, , g]) => `<td class="g${g}" data-f="${k}"></td>`).join('')}<td colspan="2"></td></tr></tfoot>
+      <tfoot><tr><td colspan="4">합계 (${people.length}명)</td><td class="hl" data-f="cost"></td><td data-f="net"></td>
+        ${payCols.map((k) => `<td data-f="p_${k}"></td>`).join('')}<td class="ga" data-f="pay"></td>${dedCols.map((k) => `<td data-f="d_${k}"></td>`).join('')}<td class="gb" data-f="ded"></td>
+        <td class="gc" data-f="retire"></td><td class="gd" data-f="support"></td><td colspan="2"></td></tr></tfoot>
     </table></div>
     <div class="kpis">
-      <div class="kpi big"><span>${m}월 총 인건비 (A+C+D)</span><b class="accent" id="fCost"></b></div>
-      <div class="kpi"><span>지급 총액 (A)</span><b id="fA"></b></div>
-      <div class="kpi"><span>실수령 총액 (A−B)</span><b id="fNet"></b></div>
+      <div class="kpi big"><span>${monthTitle(month)} 총 인건비</span><b class="accent" id="fCost"></b></div>
+      <div class="kpi"><span>지급 총액</span><b id="fPay"></b></div>
+      <div class="kpi"><span>실수령 총액</span><b id="fNet"></b></div>
       <div class="kpi"><span>1인 평균 인건비</span><b id="fAvg"></b></div>
     </div>
-    <div class="row"><button id="savePay" class="primary">저장</button><span class="muted sm" id="dirty"></span></div>
-    <p class="muted sm">총 인건비 = 지급 계(A) + 퇴직 적립(C) + 회사 부담 4대보험 등 지원(D). 실수령액 = 지급 계(A) − 공제(B). 기본급은 처음엔 직원 명부의 월 급여로 채워져요.</p>`);
+    <div class="row"><button id="savePay" class="primary">저장</button><span class="muted sm" id="dirty">${dirty ? '엑셀 내용을 불러왔어요. 확인 후 저장을 눌러 주세요.' : ''}</span></div>
+    <p class="muted sm">· 상태가 <b>확정</b> 또는 <b>지급완료</b>인 직원은 저장하면 본인 계정의 <b>급여명세서</b>에 바로 보여요.<br>
+      · 총 인건비 = 지급 계 + 퇴직 적립 + 회사 부담(4대보험 등). 퇴직·회사부담은 세무 대장에 없어서 직접 넣어 주세요.<br>
+      · 직원 이름을 누르면 명세서를 미리 볼 수 있어요.</p>`);
 
   const recalc = () => {
-    const tot = { cost: 0, net: 0, a: 0 }; [...PAY_A, ...PAY_X].forEach(([k]) => tot[k] = 0);
+    const t = { cost: 0, net: 0, pay: 0, ded: 0, retire: 0, support: 0 };
     people.forEach((p) => {
       const r = rows[p.uid], tr = $app.querySelector(`tr[data-row="${p.uid}"]`);
-      const a = sumA(r), c = totalCost(r), n = netPay(r);
-      tr.querySelector('[data-t=a]').textContent = comma(a);
-      tr.querySelector('[data-t=cost]').textContent = comma(c);
-      tr.querySelector('[data-t=net]').textContent = comma(n);
-      tot.a += a; tot.cost += c; tot.net += n; [...PAY_A, ...PAY_X].forEach(([k]) => tot[k] += num(r[k]));
+      tr.querySelector('[data-t=pay]').textContent = comma(payOf(r));
+      tr.querySelector('[data-t=ded]').textContent = comma(dedOf(r));
+      tr.querySelector('[data-t=net]').textContent = comma(netOf(r));
+      tr.querySelector('[data-t=cost]').textContent = comma(costOf(r));
+      t.cost += costOf(r); t.net += netOf(r); t.pay += payOf(r); t.ded += dedOf(r); t.retire += num(r.retire); t.support += num(r.support);
+      payCols.forEach((k) => t['p_' + k] = (t['p_' + k] || 0) + num(r.pay[k]));
+      dedCols.forEach((k) => t['d_' + k] = (t['d_' + k] || 0) + num(r.ded[k]));
     });
-    Object.entries(tot).forEach(([k, v]) => { const el = $app.querySelector(`[data-f="${k}"]`); if (el) el.textContent = comma(v); });
-    document.getElementById('fCost').textContent = comma(tot.cost) + '원';
-    document.getElementById('fA').textContent = comma(tot.a) + '원';
-    document.getElementById('fNet').textContent = comma(tot.net) + '원';
-    document.getElementById('fAvg').textContent = people.length ? comma(tot.cost / people.length) + '원' : '-';
+    Object.entries(t).forEach(([k, v]) => { const el = $app.querySelector(`[data-f="${k}"]`); if (el) el.textContent = comma(v); });
+    document.getElementById('fCost').textContent = comma(t.cost) + '원';
+    document.getElementById('fPay').textContent = comma(t.pay) + '원';
+    document.getElementById('fNet').textContent = comma(t.net) + '원';
+    document.getElementById('fAvg').textContent = people.length ? comma(t.cost / people.length) + '원' : '-';
   };
   const mark = () => { dirty = true; document.getElementById('dirty').textContent = '저장 안 된 변경 있음'; };
   $app.querySelectorAll('.pin, .st').forEach((el) => {
-    el.oninput = () => { rows[el.dataset.u][el.dataset.k] = el.classList.contains('memo') || el.classList.contains('st') ? el.value : num(el.value); mark(); recalc(); };
-    if (!el.classList.contains('memo') && !el.classList.contains('st')) {
+    const { u, g, k } = el.dataset;
+    const text = el.classList.contains('memo') || el.classList.contains('st');
+    el.oninput = () => { const v = text ? el.value : num(el.value); if (g) rows[u][g][k] = v; else rows[u][k] = v; mark(); recalc(); };
+    if (!text) {
       el.onfocus = () => { el.value = num(el.value) || ''; el.select(); };
       el.onblur = () => { el.value = num(el.value) ? comma(num(el.value)) : ''; };
     }
   });
   recalc();
+  document.getElementById('payDate').oninput = (e) => { payDate = e.target.value; mark(); };
   const leave = (fn) => () => { if (dirty && !confirm('저장하지 않은 변경이 있어요. 이동할까요?')) return; fn(); };
-  document.getElementById('prev').onclick = leave(() => go('payroll', { month: shift(-1) }));
-  document.getElementById('next').onclick = leave(() => go('payroll', { month: shift(1) }));
+  document.getElementById('prev').onclick = leave(() => go('payroll', { month: shift(-1), detail }));
+  document.getElementById('next').onclick = leave(() => go('payroll', { month: shift(1), detail }));
+  document.getElementById('detail').onclick = leave(() => go('payroll', { month, detail: !detail }));
+  document.getElementById('allStatus').onchange = (e) => {
+    if (!e.target.value) return;
+    people.forEach((p) => rows[p.uid].status = e.target.value);
+    $app.querySelectorAll('.st').forEach((s) => s.value = e.target.value); mark();
+  };
+  $app.querySelectorAll('[data-slip]').forEach((a) => a.onclick = (e) => {
+    e.preventDefault();
+    const p = people.find((x) => x.uid === a.dataset.slip);
+    const w = document.createElement('div'); w.className = 'modal';
+    w.innerHTML = `<div class="modalBox">${slipHtml(slipData(month, payDate, p, rows[p.uid]))}<div class="row"><button class="primary" id="closeM">닫기</button></div></div>`;
+    document.body.appendChild(w); w.onclick = (ev) => { if (ev.target === w || ev.target.id === 'closeM') w.remove(); };
+  });
   document.getElementById('copyPrev').onclick = async () => {
     const p = await getDoc(doc(db, 'payroll', shift(-1)));
     if (!p.exists()) return toast('전월 급여 기록이 없어요');
     if (!confirm('전월 금액으로 이번 달 표를 채울까요? (저장 전까지는 반영되지 않아요)')) return;
     const prev = p.data().rows || {};
-    people.forEach((x) => { if (prev[x.uid]) { rows[x.uid] = { ...prev[x.uid], status: '작성중' }; } });
-    $app.querySelectorAll('.pin, .st').forEach((el) => {
-      const v = rows[el.dataset.u][el.dataset.k];
-      el.value = el.classList.contains('memo') || el.classList.contains('st') ? (v || (el.classList.contains('st') ? '작성중' : '')) : (num(v) ? comma(num(v)) : '');
-    });
-    mark(); recalc();
+    const imported = { rows: {}, payDate };
+    Object.entries(prev).forEach(([id, r]) => { imported.rows[id] = { ...JSON.parse(JSON.stringify(r)), status: '작성중' }; });
+    go('payroll', { month, detail, imported });
   };
-  document.getElementById('savePay').onclick = async () => {
-    await setDoc(ref, { rows, updatedAt: serverTimestamp(), updatedBy: me.name });
-    dirty = false; document.getElementById('dirty').textContent = ''; toast('저장했어요');
+  document.getElementById('xls').onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    let data;
+    try { data = await parsePayrollExcel(file); } catch (err) { console.error(err); return alert(err.message || '엑셀을 읽지 못했어요.'); }
+    const target = data.month || month;
+    if (data.month && data.month !== month && !confirm(`엑셀은 ${monthTitle(data.month)} 급여대장이에요. ${monthTitle(data.month)} 급여로 넣을까요?`)) return;
+    const msgs = [];
+    // 이름으로 직원 찾기, 없으면 명부(미가입)로 추가
+    const missing = data.people.filter((x) => !all.some((p) => p.name === x.name && p.status !== 'rejected'));
+    if (missing.length && confirm(`직원 명부에 없는 이름이 ${missing.length}명 있어요: ${missing.map((x) => x.name).join(', ')}\n명부에 추가할까요? (취소하면 이 사람들은 건너뛰어요)`)) {
+      for (const x of missing) {
+        const r = await addDoc(collection(db, 'users'), { name: x.name, job: x.job, dept: x.dept, team: '', role: 'staff', phone: '', email: '',
+          hireDate: x.hireDate, work: x.quitDate ? '퇴사' : '재직', annualAdjust: 0, status: 'roster', createdAt: serverTimestamp() });
+        all.push({ uid: r.id, name: x.name, status: 'roster', role: 'staff', hireDate: x.hireDate });
+      }
+      msgs.push(`명부에 ${missing.length}명을 새로 추가했어요.`);
+    }
+    const imported = { rows: {}, payDate: data.payDate };
+    const prevRows = target === month ? rows : ((await getDoc(doc(db, 'payroll', target))).data()?.rows || {});
+    const filled = [];
+    for (const x of data.people) {
+      const p = all.find((q) => q.name === x.name && q.status !== 'rejected');
+      if (!p) continue;
+      const old = prevRows[p.uid] || {};
+      imported.rows[p.uid] = { pay: x.pay, ded: x.ded, retire: old.retire || 0, support: old.support || 0, memo: old.memo || '', status: '확정',
+        name: x.name, job: x.job, dept: x.dept, hireDate: x.hireDate, quitDate: x.quitDate };
+      const calc = imported.rows[p.uid];
+      if (x.fileNet && Math.abs(netOf(calc) - x.fileNet) > 1) msgs.push(`⚠️ ${x.name}: 엑셀 실수령액(${comma(x.fileNet)})과 계산값(${comma(netOf(calc))})이 달라요. 확인해 주세요.`);
+      if (!p.hireDate && x.hireDate && p.status) { await updateDoc(doc(db, 'users', p.uid), { hireDate: x.hireDate }); filled.push(x.name); }
+    }
+    if (filled.length) msgs.push(`입사일이 비어 있던 ${filled.join(', ')}의 입사일을 엑셀 기준으로 넣었어요.`);
+    msgs.unshift(`📤 ${monthTitle(target)} 급여대장에서 ${Object.keys(imported.rows).length}명을 불러왔어요. 확인 후 <b>저장</b>을 눌러 주세요.`);
+    go('payroll', { month: target, detail: true, imported, warn: msgs.join('<br>') });
   };
+  document.getElementById('savePay').onclick = async (ev) => {
+    ev.target.disabled = true;
+    const clean = {};
+    people.forEach((p) => { clean[p.uid] = { ...rows[p.uid], name: p.name }; });
+    await setDoc(ref, { rows: clean, payDate, updatedAt: serverTimestamp(), updatedBy: me.name });
+    // 직원별 명세서 공개/회수
+    let n = 0;
+    for (const p of people) {
+      const sref = doc(db, 'payslips', `${month}_${p.uid}`);
+      if (['확정', '지급완료'].includes(clean[p.uid].status)) { await setDoc(sref, slipData(month, payDate, p, clean[p.uid])); n++; }
+      else await deleteDoc(sref).catch(() => {});
+    }
+    dirty = false; document.getElementById('dirty').textContent = ''; ev.target.disabled = false;
+    toast(`저장했어요 · 명세서 ${n}명 공개`);
+  };
+}
+
+// ---------- 급여명세서 ----------
+function slipData(month, payDate, p, r) {
+  return {
+    uid: p.uid, month, payDate: payDate || '', clinicName: theme.clinicName,
+    name: p.name, dept: r.dept || p.dept || '', job: r.job || p.job || '', hireDate: r.hireDate || p.hireDate || '',
+    pay: PAY_ITEMS.map((k) => [k, num(r.pay?.[k])]), ded: DED_ITEMS.map((k) => [k, num(r.ded?.[k])]),
+    payTotal: payOf(r), dedTotal: dedOf(r), net: netOf(r)
+  };
+}
+function slipHtml(s) {
+  const n = Math.max(s.pay.length, s.ded.length);
+  const v = (x) => x ? comma(x) : '';
+  return `<div class="slip">
+    <h2 class="slipTitle">${monthTitle(s.month)} 급상여명세서</h2>
+    <div class="slipInfo">
+      <div>회사명 : ${esc(s.clinicName)}</div><div>입사일 : ${esc(s.hireDate || '-')}</div>
+      <div>성명 : <b>${esc(s.name)}</b></div><div>지급일 : ${esc(s.payDate || '-')}</div>
+      <div>부서 : ${esc(s.dept || '')}</div><div>직위 : ${esc(s.job || '')}</div>
+    </div>
+    <table class="slipTbl">
+      <tr><th colspan="4" class="cap">세부 내역</th></tr>
+      <tr><th colspan="2">지 급</th><th colspan="2">공 제</th></tr>
+      <tr><th>임금 항목</th><th>지급 금액</th><th>공제 항목</th><th>공제 금액</th></tr>
+      ${Array.from({ length: n }, (_, i) => `<tr><td>${s.pay[i]?.[0] || ''}</td><td class="r">${v(s.pay[i]?.[1])}</td><td>${s.ded[i]?.[0] || ''}</td><td class="r">${v(s.ded[i]?.[1])}</td></tr>`).join('')}
+      <tr class="sum"><th>지급액 계</th><td class="r">${comma(s.payTotal)}</td><th>공제액 계</th><td class="r">${comma(s.dedTotal)}</td></tr>
+      <tr class="sum"><td colspan="2" class="blank"></td><th>실수령액</th><td class="r net">${comma(s.net)}</td></tr>
+    </table>
+    <p class="slipFoot">귀하의 노고에 감사드립니다.</p>
+  </div>`;
+}
+async function renderMySlips() {
+  const snap = await getDocs(query(collection(db, 'payslips'), where('uid', '==', me.uid)));
+  const slips = snap.docs.map((d) => d.data()).sort((a, b) => b.month.localeCompare(a.month));
+  const cur = slips.find((s) => s.month === sub?.month) || slips[0];
+  shell(`
+    <div class="row between noprint"><div><p class="eyebrow">PAYSLIP</p><h1>급여명세서</h1></div>
+      ${slips.length ? `<div class="row"><select id="sm" style="width:auto;flex:none">${slips.map((s) => `<option value="${s.month}" ${s === cur ? 'selected' : ''}>${monthTitle(s.month)}</option>`).join('')}</select>
+        <button id="print" class="ghost">🖨️ 인쇄 / PDF 저장</button></div>` : ''}</div>
+    ${cur ? `<section class="card slipCard">${slipHtml(cur)}</section>` : '<section class="card"><p class="muted">아직 공개된 급여명세서가 없어요.</p></section>'}
+    <p class="muted sm noprint">명세서는 본인과 관리자만 볼 수 있어요.</p>`);
+  document.getElementById('sm')?.addEventListener('change', (e) => go('slips', { month: e.target.value }));
+  document.getElementById('print')?.addEventListener('click', () => window.print());
 }
 
 async function renderSchedule(head, bindTabs) {

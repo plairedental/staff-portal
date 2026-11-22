@@ -1,7 +1,14 @@
 {
   "name": "staff-portal",
   "private": true,
-  "scripts": { "build": "esbuild src/main.js --bundle --minify --format=esm --target=es2020 --outfile=docs/app.js" },
-  "dependencies": { "firebase": "^13.4.0" },
-  "devDependencies": { "esbuild": "^0.28.2" }
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --minify --format=esm --target=es2020 --splitting --outdir=docs --entry-names=app --chunk-names=chunks/[name]-[hash]"
+  },
+  "dependencies": {
+    "firebase": "^13.4.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
 }

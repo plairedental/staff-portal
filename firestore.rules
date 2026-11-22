@@ -67,6 +67,12 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // 급여명세서: 본인과 관리자만
+    match /payslips/{id} {
+      allow read: if isAdmin() || (active() && resource.data.uid == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
     // 매뉴얼: 승인된 직원 모두 읽기, 관리자·총괄실장 수정
     match /manuals/{id} {
       allow read: if active();

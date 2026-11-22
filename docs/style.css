@@ -217,3 +217,29 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--c2); }
   .kpi b { font-size: 1.25rem; }
   .kinds > div { padding: .7rem .5rem; } .kinds b { font-size: 1.1rem; }
 }
+
+/* 급여 업로드·명세서 */
+.monthBox { text-align: center; } .monthBox b { display: block; font-size: 1.2rem; }
+.monthBox label { display: flex; align-items: center; gap: .3rem; margin: .2rem 0 0; justify-content: center; }
+.monthBox input { width: auto; padding: .2rem .4rem; margin: 0; }
+.toolbar { margin: .6rem 0; }
+.upload { display: inline-block; padding: .55rem 1rem; border-radius: 8px; background: var(--c); color: #fff !important; cursor: pointer; font-size: .9rem; margin: 0; }
+.pay td a { color: var(--text); text-decoration: none; } .pay td a:hover b { color: var(--c); text-decoration: underline; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 50; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 2rem 1rem; }
+.modalBox { background: #fff; border-radius: 14px; padding: 1.2rem; max-width: 760px; width: 100%; }
+.slip { color: #111; }
+.slipTitle { text-align: center; font-size: 1.35rem; margin: .5rem 0 1rem; text-decoration: underline; text-underline-offset: 6px; }
+.slipInfo { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem 1rem; font-size: .9rem; margin-bottom: .8rem; }
+.slipTbl { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.slipTbl th, .slipTbl td { border: 1px solid #333; padding: .35rem .5rem; }
+.slipTbl th { background: #e4e4e4; font-weight: 600; }
+.slipTbl .cap { background: #d4d4d4; }
+.slipTbl td.r { text-align: right; font-variant-numeric: tabular-nums; }
+.slipTbl tr.sum th { background: #e4e4e4; } .slipTbl .net { font-weight: 800; }
+.slipTbl td.blank { border-left: none; border-bottom: none; }
+.slipFoot { margin-top: 1.5rem; font-size: .9rem; }
+@media print {
+  header.top, aside.side, .noprint, .toast { display: none !important; }
+  body, main { background: #fff; padding: 0; margin: 0; max-width: none; }
+  .card.slipCard { border: none; padding: 0; }
+}
