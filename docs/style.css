@@ -380,3 +380,17 @@ table.cal { width: 100%; min-width: 640px; border-collapse: collapse; table-layo
 .legend em { font-style: normal; font-size: .75rem; }
 .chip.t-senior { border-color: #93c5fd; } .chip.t-junior { border-color: #fdba74; }
 .chip.on.t-senior, .chip.on.t-junior { background: var(--c); color: #fff; }
+/* 사람별 근무표 색 */
+.pc { border-radius: 4px; padding: 0 .3rem; }
+.pc-green { background: #1f7a3a !important; color: #fff !important; }
+.pc-red { background: #fca5a5 !important; color: #7f1d1d !important; }
+.pc-orange { background: #fdba74 !important; color: #7c2d12 !important; }
+.pc-yellow { background: #fde68a !important; color: #713f12 !important; }
+.pc-lime { background: #d9f99d !important; color: #365314 !important; }
+.pc-purple { background: #e9d5ff !important; color: #581c87 !important; }
+.pc-blue { background: #bfdbfe !important; color: #1e3a8a !important; }
+.pc-pink { background: #fbcfe8 !important; color: #831843 !important; }
+.pc-gray { background: #e5e7eb !important; color: #374151 !important; }
+.pcSel { min-width: 5rem; padding: .35rem .4rem; }
+.chip.pc { border: 1px solid transparent; padding: .3rem .7rem; }
+.chip.pc.on { outline: 3px solid var(--text); outline-offset: 1px; }

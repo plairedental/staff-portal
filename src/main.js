@@ -1197,8 +1197,10 @@ async function renderSchedule() {
   const rank = (name) => { const i = order.findIndex((o) => o.name === name); return i < 0 ? 999 : i; };
   const groupOf = (name) => order.find((o) => o.name === name) || { group: '기타', doctor: false, gi: 999 };
   // 진료팀 고년차/저년차 색: 조직도의 직급으로 정해요 (팀장·시니어 = 고년차, 주니어·엔트리 = 저년차)
-  const titleOf = {}; (org.groups || []).forEach((g) => (g.members || []).forEach((m) => { titleOf[m.name] = m.title || ''; }));
-  const tierOf = (name) => /팀장|시니어|고년차/.test(titleOf[name] || '') ? 't-senior' : /주니어|엔트리|저년차|신입/.test(titleOf[name] || '') ? 't-junior' : '';
+  const titleOf = {}, colorOf = {}; (org.groups || []).forEach((g) => (g.members || []).forEach((m) => { titleOf[m.name] = m.title || ''; colorOf[m.name] = m.color || ''; }));
+  const anyColor = Object.values(colorOf).some(Boolean);
+  const tierOf = (name) => colorOf[name] ? 'pc pc-' + colorOf[name]
+    : anyColor ? '' : /팀장|시니어|고년차/.test(titleOf[name] || '') ? 't-senior' : /주니어|엔트리|저년차|신입/.test(titleOf[name] || '') ? 't-junior' : '';
   data.people.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name, 'ko'));
   const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
   const hol = (d) => data.holidays[d] || HOLIDAYS[`${month}-${pad(d)}`] || '';
@@ -1231,7 +1233,7 @@ async function renderSchedule() {
     shell(`${head}
       <div class="calWrap"><table class="cal"><tr>${'일월화수목금토'.split('').map((w, i) => `<th class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</th>`).join('')}</tr>
         ${Array.from({ length: cells.length / 7 }, (_, w) => `<tr>${cells.slice(w * 7, w * 7 + 7).map(dayHtml).join('')}</tr>`).join('')}</table></div>
-      <div class="legend sm"><span class="ln l-연차"><span>연차</span></span> (오전)=오전반차 0.4일 (오후)=오후반차 0.6일 <span class="ln l-비번"><span>비번</span></span> 주휴 <span class="ln l-야간빠짐"><span>야간빠짐</span></span> 월요일 야간 오프 · <em class="t-senior">고년차</em> <em class="t-junior">저년차</em>
+      <div class="legend sm"><span class="ln l-연차"><span>연차</span></span> (오전)=오전반차 0.4일 (오후)=오후반차 0.6일 <span class="ln l-비번"><span>비번</span></span> 주휴 <span class="ln l-야간빠짐"><span>야간빠짐</span></span> 월요일 야간 오프 · ${anyColor ? '이름 색은 조직도에서 정한 업무 그룹 색이에요' : '<em class="t-senior">고년차</em> <em class="t-junior">저년차</em>'}
         ${editor ? ' · <b>날짜를 누르면 쉬는 사람을 넣을 수 있어요.</b>' : ''}</div>`);
   } else {
     let stamp = sub?.stamp ?? '비번';
@@ -1326,6 +1328,8 @@ function withTree(org) {
   g.forEach((x) => { if (x.parent && !g.some((y) => y.id === x.parent)) x.parent = ''; });
   return org;
 }
+// 근무표에서 쓰는 사람별 색 (조직도 편집에서 고름)
+const PCOLORS = { green: '초록', red: '빨강', orange: '주황', yellow: '노랑', lime: '연두', purple: '보라', blue: '파랑', pink: '분홍', gray: '회색' };
 // 트리 구조 도우미: 첫 번째 최상위 부서가 가운데(맨 위), 나머지 최상위 부서와 '옆' 부서는 그 옆에 붙여 표시
 function orgTree(org) {
   const g = org.groups || [];
@@ -1355,6 +1359,13 @@ async function importInitFile(file) {
   let init;
   try { init = JSON.parse(await file.text()); } catch { return alert('파일을 읽지 못했어요.'); }
   if (init.type !== 'plaire-portal-init') return alert('직원포털 자료 파일이 아니에요.');
+  if (!init.org && init.colors) {   // 색만 바꾸는 파일: 지금 조직도는 그대로 두고 이름별 색만 넣기
+    const org = await loadOrg(); let n = 0;
+    org.groups.forEach((g) => (g.members || []).forEach((m) => { if (init.colors[m.name] !== undefined) { m.color = init.colors[m.name]; n++; } }));
+    if (!confirm(`조직도는 그대로 두고 ${n}명의 근무표 색만 바꿀까요?`)) return;
+    await setDoc(doc(db, 'org', 'main'), { groups: org.groups, updatedAt: serverTimestamp(), updatedBy: me.name });
+    toast(`${n}명 색을 바꿨어요`); return go('org');
+  }
   const months = Object.keys(init.schedules || {});
   if (!confirm(`이 파일로 다음을 채울까요?\n· 조직도 ${orgOrder(init.org).length}명\n· 근무표 ${months.length}개월 (${months.join(', ')})${init.leaveRules ? '\n· 연차 사용 규칙 (비어 있을 때만)' : ''}\n\n지금 조직도는 파일 내용으로 바뀌어요.`)) return;
   let people = await loadPeople();
@@ -1429,10 +1440,12 @@ async function renderOrg() {
               <select data-par="${gi}"><option value="">맨 위 (최상위)</option>${g.filter((x) => !bad.includes(x.id)).map((x) => `<option value="${x.id}" ${grp.parent === x.id && !grp.side ? 'selected' : ''}>${esc(x.name)} 밑</option><option value="side:${x.id}" ${grp.parent === x.id && grp.side ? 'selected' : ''}>${esc(x.name)} 옆 (나란히)</option>`).join('')}</select></label>
             <button data-gu="${gi}" class="ghost sm" title="같은 줄에서 앞으로">↑</button><button data-gd="${gi}" class="ghost sm" title="같은 줄에서 뒤로">↓</button>
             <button data-gx="${gi}" class="ghost sm danger">부서 삭제</button></div>
-          <div class="tbl"><table class="oeT"><tr><th></th><th>이름</th><th>직급</th><th>R&R (역할)</th><th>담당 업무</th><th>휴무 시 인계</th><th></th></tr>
+          <div class="tbl"><table class="oeT"><tr><th></th><th>이름</th><th>직급</th><th>근무표 색</th><th>R&R (역할)</th><th>담당 업무</th><th>휴무 시 인계</th><th></th></tr>
             ${(grp.members || []).map((m, mi) => `<tr>
               <td class="nowrap"><button data-mu="${gi}:${mi}" class="ghost sm">↑</button><button data-md="${gi}:${mi}" class="ghost sm">↓</button></td>
-              ${['name', 'title', 'rr', 'duty', 'backup'].map((k) => `<td><input data-m="${gi}:${mi}:${k}" value="${esc(m[k] || '')}" ${k === 'name' ? 'list="names"' : ''}></td>`).join('')}
+              ${['name', 'title'].map((k) => `<td><input data-m="${gi}:${mi}:${k}" value="${esc(m[k] || '')}" ${k === 'name' ? 'list="names"' : ''}></td>`).join('')}
+              <td><select data-m="${gi}:${mi}:color" class="pcSel pc-${m.color || ''}"><option value="">없음</option>${Object.entries(PCOLORS).map(([k, t]) => `<option value="${k}" ${m.color === k ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
+              ${['rr', 'duty', 'backup'].map((k) => `<td><input data-m="${gi}:${mi}:${k}" value="${esc(m[k] || '')}"></td>`).join('')}
               <td><button data-mx="${gi}:${mi}" class="ghost sm danger">✕</button></td></tr>`).join('')}
           </table></div>
           <div class="row"><button data-ma="${gi}" class="ghost sm">＋ 사람 추가</button><button data-sub="${gi}" class="ghost sm">＋ 이 부서 밑에 하위 부서 추가</button></div>
@@ -1451,7 +1464,10 @@ async function renderOrg() {
       const x = g[el.dataset.par], v = el.value;
       x.side = v.startsWith('side:'); x.parent = x.side ? v.slice(5) : v; draw();
     });
-    $app.querySelectorAll('[data-m]').forEach((el) => el.oninput = () => { const [gi, mi, k] = el.dataset.m.split(':'); g[gi].members[mi][k] = el.value; });
+    $app.querySelectorAll('[data-m]').forEach((el) => el.oninput = el.onchange = () => {
+      const [gi, mi, k] = el.dataset.m.split(':'); g[gi].members[mi][k] = el.value;
+      if (k === 'color') el.className = 'pcSel pc-' + el.value;
+    });
     $app.querySelectorAll('[data-gu]').forEach((b) => b.onclick = () => swapSib(+b.dataset.gu, -1));
     $app.querySelectorAll('[data-gd]').forEach((b) => b.onclick = () => swapSib(+b.dataset.gd, 1));
     $app.querySelectorAll('[data-gx]').forEach((b) => b.onclick = () => {
