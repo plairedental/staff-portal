@@ -405,3 +405,6 @@ table.cal { width: 100%; min-width: 640px; border-collapse: collapse; table-layo
 .leftBanner.dd-yellow { background: #b7791f; } .leftBanner.dd-red { background: #c53030; }
 .leftBanner.dd-yellow .ddTag, .leftBanner.dd-red .ddTag { background: rgba(255,255,255,.3); color: #fff; }
 @media (max-width: 760px) { .leftBanner { grid-template-columns: 1fr 1fr; gap: .8rem; } .leftBanner > div:last-child { grid-column: 1 / -1; } .leftBanner b { font-size: 1.4rem; } }
+.staffT td, .staffT th { white-space: nowrap; }
+.staffT td a { color: var(--text); text-decoration: none; } .staffT td a:hover b { color: var(--c); text-decoration: underline; }
+.staffT .tag { margin-left: 0; }

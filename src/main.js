@@ -174,7 +174,7 @@ function categories() {
       ['work:leave', '내 연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.']
     ], admin: [
       ['work:all', '연차 승인·현황', '✅', '직원 연차 신청을 승인하고 사용 현황을 봐요.', canApprove],
-      ['hr', '회원관리', '👥', '직원 정보, 연봉, 가입 승인을 관리해요.', can.hr]
+      ['hr', '직원 명부', '📇', '직원 정보, 연봉, 가입 승인을 관리해요.', can.hr]
     ] },
     { key: 'pay', label: '급여', icon: '💰', items: [
       ['slips', '내 급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.']
@@ -321,7 +321,8 @@ async function renderMy() {
         ${sal.annualDate ? `<dt>적용(입력)일</dt><dd>${sal.annualDate}</dd>` : ''}
         ${sal.note ? `<dt>메모</dt><dd>${esc(sal.note)}</dd>` : ''}</dl>`
         : '<p class="muted">아직 등록된 연봉 정보가 없어요.</p>'}
-      <p class="muted sm">연봉은 본인과 관리자만 볼 수 있어요. 매달 급여명세서는 왼쪽 메뉴 "급여명세서"에서 확인하세요.</p>
+      ${sal && (sal.address || sal.bankAccount) ? `<dl class="info">${sal.address ? `<dt>주소</dt><dd>${esc(sal.address)}</dd>` : ''}${sal.bankAccount ? `<dt>급여계좌</dt><dd>${esc(sal.bankName || '')} ${esc(sal.bankAccount)}${sal.bankHolder ? ` (${esc(sal.bankHolder)})` : ''}</dd>` : ''}</dl>` : ''}
+      <p class="muted sm">연봉·주소·급여계좌는 본인과 관리자만 볼 수 있어요. 바뀐 내용이 있으면 관리자에게 알려 주세요. 매달 급여명세서는 "급여" 메뉴에서 확인하세요.</p>
     </section>`);
   document.getElementById('savePhone').onclick = async () => {
     await updateDoc(doc(db, 'users', me.uid), { phone: val('phone') });
@@ -335,6 +336,15 @@ async function renderMy() {
 }
 
 // ---------- 인사관리 ----------
+function tenure(hire) {
+  if (!hire) return '<span class="muted">-</span>';
+  const h = parseD(hire), t = new Date();
+  let m = (t.getFullYear() - h.getFullYear()) * 12 + t.getMonth() - h.getMonth();
+  if (t.getDate() < h.getDate()) m--;
+  if (m < 0) return '입사 전';
+  const y = Math.floor(m / 12), r = m % 12;
+  return y ? `${y}년${r ? ` ${r}개월` : ''}` : `${r}개월`;
+}
 async function loadPeople() {
   const col = collection(db, 'users');
   const q = me.role === 'leader' ? query(col, where('team', '==', me.team || '')) : col;
@@ -349,14 +359,17 @@ async function renderHr() {
   const pending = people.filter((p) => p.status === 'pending');
   const roster = people.filter((p) => p.status === 'roster');
   const staff = people.filter((p) => p.status === 'active' || p.status === 'roster');
-  const shown = sub?.showAll ? staff : staff.filter((p) => (p.work || '재직') !== '퇴사');
+  const order = orgOrder(await loadOrg());
+  const rankOf = (n) => { const i = order.findIndex((o) => o.name === n); return i < 0 ? 999 : i; };
+  const shown = (sub?.showAll ? staff : staff.filter((p) => (p.work || '재직') !== '퇴사'))
+    .sort((a, b) => rankOf(a.name) - rankOf(b.name) || a.name.localeCompare(b.name, 'ko'));
   const digits = (s) => String(s || '').replace(/\D/g, '');
   const matchOf = (p) => roster.find((r) => r.email && p.email && r.email.toLowerCase() === p.email.toLowerCase())
     || roster.find((r) => digits(r.phone) && digits(r.phone) === digits(p.phone))
     || roster.find((r) => r.name && r.name === p.name);
 
   shell(`
-    <div class="row between"><h1>인사관리</h1>${can.editHr() ? '<button id="add" class="primary">+ 직원 추가</button>' : ''}</div>
+    <div class="row between"><div><p class="eyebrow">STAFF LIST</p><h1>직원 명부</h1></div>${can.editHr() ? '<button id="add" class="primary">+ 직원 추가</button>' : ''}</div>
     ${can.editHr() && pending.length ? `
       <section class="card warn">
         <h2>가입 승인 대기 (${pending.length})</h2>
@@ -379,19 +392,27 @@ async function renderHr() {
     <section class="card">
       <div class="row between"><h2>직원 ${shown.length}명${roster.length ? ` <span class="muted sm">(미가입 ${roster.length})</span>` : ''}</h2>
         <label class="sm"><input type="checkbox" id="showAll" ${sub?.showAll ? 'checked' : ''}> 퇴사자 포함</label></div>
-      <div class="list">
-        ${shown.map((p) => `
-          <button class="item" data-p="${p.uid}">
-            <b>${esc(p.name)}</b>
-            <span>${esc(p.job) || ''}${p.team ? ' · ' + esc(p.team) : ''}</span>
-            <span class="tag">${ROLES[p.role] || '직원'}</span>
-            ${p.status === 'roster' ? '<span class="tag gray">미가입</span>' : ''}
-            ${(p.work && p.work !== '재직') ? `<span class="tag gray">${esc(p.work)}</span>` : ''}
-          </button>`).join('') || '<p class="muted">아직 직원이 없어요.</p>'}
-      </div>
+      <div class="tbl"><table class="staffT">
+        <tr><th>이름</th><th>직무</th><th>팀</th><th>역할</th><th>입사일</th><th>근속기간</th><th>상태</th>${can.editHr() ? '<th></th>' : ''}</tr>
+        ${shown.map((p) => `<tr>
+          <td><a href="#" data-p="${p.uid}"><b>${esc(p.name)}</b></a></td>
+          <td>${esc(p.job || '-')}</td><td>${esc(p.team || '-')}</td><td><span class="tag">${ROLES[p.role] || '직원'}</span></td>
+          <td>${p.hireDate || '<span class="muted">-</span>'}</td><td>${tenure(p.hireDate)}</td>
+          <td>${p.status === 'roster' ? '<span class="tag gray">미가입</span>' : ''}${(p.work && p.work !== '재직') ? ` <span class="tag gray">${esc(p.work)}</span>` : ''}</td>
+          ${can.editHr() ? `<td class="nowrap"><button data-p="${p.uid}" class="ghost sm">✏️ 수정</button>${p.uid !== me.uid ? `<button data-delp="${p.uid}" class="ghost sm danger">🗑️ 삭제</button>` : ''}</td>` : ''}
+        </tr>`).join('') || '<tr><td colspan="8" class="muted">아직 직원이 없어요.</td></tr>'}
+      </table></div>
+      <p class="muted sm">조직도 순서로 보여요. 퇴사한 직원은 삭제보다 재직상태를 "퇴사"로 바꾸는 걸 권해요.</p>
     </section>`);
 
-  $app.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => go('hr', { uid: b.dataset.p }));
+  $app.querySelectorAll('[data-p]').forEach((b) => b.onclick = (e) => { e.preventDefault(); go('hr', { uid: b.dataset.p }); });
+  $app.querySelectorAll('[data-delp]').forEach((b) => b.onclick = async () => {
+    const p = people.find((x) => x.uid === b.dataset.delp);
+    if (!confirm(`${p.name} 님을 직원 명부에서 삭제할까요?\n연봉·주소·계좌 정보도 함께 지워지고 되돌릴 수 없어요.\n(퇴사자는 삭제 대신 재직상태를 "퇴사"로 바꾸는 걸 권해요)`)) return;
+    await deleteDoc(doc(db, 'salaries', p.uid)).catch(() => {});
+    await deleteDoc(doc(db, 'users', p.uid));
+    toast('삭제했어요'); go('hr', sub?.showAll ? { showAll: true } : null);
+  });
   document.getElementById('add')?.addEventListener('click', () => go('hr', { uid: 'new' }));
   document.getElementById('showAll').onchange = (e) => go('hr', { showAll: e.target.checked });
   $app.querySelectorAll('[data-link]').forEach((s) => s.onchange = () => {
@@ -499,6 +520,12 @@ async function renderPerson(uid) {
           <span class="stamp">${sal.annualDate ? `📅 ${sal.annualDate} 입력${sal.annualBy ? ' · ' + esc(sal.annualBy) : ''}` : '아직 입력 안 됨'}</span></div></label>
       <label>세전 월급여 (연봉 ÷ 12, 자동 계산)<input id="monthlyView" disabled value="${sal.annual ? comma(Math.round(sal.annual / 12)) + '원' : sal.monthly ? comma(sal.monthly) + '원' : ''}"></label>
       ${f('note', '메모 (예: 식대 포함, 2026년 연봉협상)', sal.note ?? '')}
+    </section>
+    <section class="card form">
+      <h2>주소 · 급여계좌 <span class="muted sm">(본인과 관리자만 볼 수 있어요)</span></h2>
+      ${f('address', '주소', sal.address ?? '')}
+      <div class="two">${f('bankName', '은행', sal.bankName ?? '')}${f('bankHolder', '예금주', sal.bankHolder ?? '')}</div>
+      ${f('bankAccount', '계좌번호', sal.bankAccount ?? '')}
       ${(sal.history || []).length ? `<div class="hist"><b class="sm">연봉 변경 이력</b>
         ${[...sal.history].reverse().map((h) => `<div class="sm"><span>${h.date}</span><span>${comma(h.annual)}원</span><span class="muted">${esc(h.by || '')}</span></div>`).join('')}</div>` : ''}
     </section>
@@ -523,8 +550,9 @@ async function renderPerson(uid) {
     if (isNew) { const r = await addDoc(collection(db, 'users'), { ...data, status: 'roster', createdAt: serverTimestamp() }); id = r.id; }
     else await updateDoc(doc(db, 'users', uid), data);
     const annual = num(val('annual'));
-    if (annual || val('note') || !isNew) {
-      const next = { ...sal, note: val('note'), updatedAt: serverTimestamp() };
+    const priv = { address: val('address'), bankName: val('bankName'), bankHolder: val('bankHolder'), bankAccount: val('bankAccount') };
+    if (annual || val('note') || Object.values(priv).some(Boolean) || !isNew) {
+      const next = { ...sal, ...priv, note: val('note'), updatedAt: serverTimestamp() };
       if (annual !== num(sal.annual)) {   // 연봉이 바뀌면 오늘 날짜와 함께 이력에 남김
         next.annual = annual || null;
         next.monthly = annual ? Math.round(annual / 12) : null;
@@ -622,7 +650,7 @@ const dayBefore = (d) => { const x = new Date(d); x.setDate(x.getDate() - 1); re
 const ddayOf = (s) => { const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((parseD(s) - t) / 86400000); };
 const ddayCls = (n) => n <= 30 ? 'dd-red' : n <= 60 ? 'dd-yellow' : '';
 const ddayTxt = (n) => n > 0 ? `D-${n}` : n === 0 ? 'D-DAY' : `D+${-n}`;
-// 연차 대상 아님: 회원관리에서 체크했거나, 대표원장
+// 연차 대상 아님: 직원 명부에서 체크했거나, 대표원장
 const noLeave = (u, titleMap = {}) => u.noLeave === true || (u.noLeave === undefined && /대표원장/.test(`${u.job || ''} ${titleMap[u.name] || ''}`));
 
 // 근로기준법 기준 연차 (입사일 기준, 출근율 80% 이상 가정)
@@ -713,7 +741,7 @@ function leaveDash(user, leaves) {
         <div class="sm">${n <= 60 ? '⏰ 사용기한이 얼마 남지 않았어요. 남은 연차를 계획해 주세요.' : '남은 연차는 사용기한까지 사용해 주세요.'}</div>
       </div>
       <p class="muted sm">${b.period.label} · 연차 기간 ${b.period.start} ~ ${b.period.last}${b.period.next ? ' · ' + b.period.next : ''}</p>`; })()
-      : '<p class="msg">입사일이 등록되지 않아 연차를 계산할 수 없어요. 회원관리에서 입사일을 넣어 주세요.</p>'}
+      : '<p class="msg">입사일이 등록되지 않아 연차를 계산할 수 없어요. 직원 명부에서 입사일을 넣어 주세요.</p>'}
     <div class="kpis">
       <div class="kpi"><span>부여</span><b>${fmtD(b.total)}</b>${Number(user.annualAdjust || 0) ? `<small>조정 ${user.annualAdjust > 0 ? '+' : ''}${user.annualAdjust}일 포함</small>` : ''}</div>
       <div class="kpi"><span>사용</span><b>${fmtD(b.used)}</b></div>
@@ -884,7 +912,7 @@ async function renderLeaveAll() {
           <td>${fmtD(b.total)}</td><td>${fmtD(b.used)}</td><td><b class="${b.left < 0 ? 'neg' : ''}">${fmtD(b.left)}</b></td>
           <td><div class="mini"><i style="width:${b.total ? Math.min(100, b.used / b.total * 100) : 0}%"></i></div></td><td>${b.pending || ''}</td></tr>`; }).join('')}
       </table></div>
-      <p class="muted sm">잔여일이 많은 순서예요. 사용기한(다음 입사기념일 하루 전)까지 <span class="ddTag dd-yellow">60일 이내</span> <span class="ddTag dd-red">30일 이내</span>는 색으로 표시돼요. 이름을 누르면 그 직원의 연차 대시보드를 볼 수 있어요.<br>대표원장처럼 연차 대상이 아닌 사람은 목록에서 빠져요. (회원관리 → "연차 대상 아님"으로 바꿀 수 있어요)</p>
+      <p class="muted sm">잔여일이 많은 순서예요. 사용기한(다음 입사기념일 하루 전)까지 <span class="ddTag dd-yellow">60일 이내</span> <span class="ddTag dd-red">30일 이내</span>는 색으로 표시돼요. 이름을 누르면 그 직원의 연차 대시보드를 볼 수 있어요.<br>대표원장처럼 연차 대상이 아닌 사람은 목록에서 빠져요. (직원 명부 → "연차 대상 아님"으로 바꿀 수 있어요)</p>
     </section>
     <section class="card">
       <div class="row between"><h2>전체 사용 내역</h2>
