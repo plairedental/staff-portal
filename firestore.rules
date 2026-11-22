@@ -96,5 +96,35 @@ service cloud.firestore {
       allow read: if active();
       allow write: if hasRole(['admin', 'chief']);
     }
+    match /manualMeta/{id} {
+      allow read: if active();
+      allow write: if hasRole(['admin', 'chief']);
+    }
+    match /manualImages/{id} {
+      allow read: if active();
+      allow write: if hasRole(['admin', 'chief']);
+    }
+    // 업데이트 기록·AI 제안: 모두 보기, 관리자·총괄실장만 쓰기
+    match /manualLog/{id} {
+      allow read: if active();
+      allow write: if hasRole(['admin', 'chief']);
+    }
+    // 직원 성찰노트·개선 요청: 모두 보기, 본인 글 쓰기, 피드백·상태는 관리자·총괄실장
+    match /notes/{id} {
+      allow read: if active();
+      allow create: if active() && request.resource.data.uid == request.auth.uid;
+      allow update: if hasRole(['admin', 'chief'])
+        || (active() && resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mistake', 'plan', 'pageId', 'pageTitle']));
+      allow delete: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
+    }
+    match /manualReqs/{id} {
+      allow read: if active();
+      allow create: if active() && request.resource.data.uid == request.auth.uid;
+      allow update: if hasRole(['admin', 'chief'])
+        || (active() && resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'pageId', 'pageTitle']));
+      allow delete: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
+    }
   }
 }

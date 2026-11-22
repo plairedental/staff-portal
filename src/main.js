@@ -182,9 +182,14 @@ function categories() {
       ['payroll', '직원 급여 관리', '💰', '전체 직원 급여대장과 총 인건비를 봐요.', () => me.role === 'admin']
     ] },
     { key: 'manual', label: '원내매뉴얼', icon: '📘', items: [
-      ['manual', '매뉴얼 목록', '📘', '원내 업무 매뉴얼을 찾아봐요.']
+      ['manual', '홈', '🏠', '매뉴얼을 만든 이유와 읽는 법이에요.'],
+      ['m:check', '진료 준비 체크리스트', '✅', '접수부터 환자 교체까지 순서대로 확인해요.'],
+      ['m:notes', '직원 성찰노트', '📝', '실수와 개선 계획을 함께 나눠요.'],
+      ['m:log', '매뉴얼 업데이트 리뷰', '🔄', '언제 무엇이 바뀌었는지 봐요.'],
+      ['m:req', '개선 요청', '💬', '매뉴얼에 대한 의견을 남겨요.']
     ], admin: [
-      ['manual:new', '매뉴얼 작성', '✏️', '새 매뉴얼을 작성해요.', can.editManual]
+      ['m:new', '새 매뉴얼 페이지', '✏️', '새 페이지를 직접 써요.', can.editManual],
+      ['m:admin', '목차·가져오기', '🗂️', '목차 순서를 바꾸고 매뉴얼 파일을 가져와요.', can.editManual]
     ] }
   ].filter((c) => !c.show || c.show())
    .map((c) => ({ ...c, items: f(c.items), admin: f(c.admin) }));
@@ -196,13 +201,26 @@ const MY_ITEMS = [
   ['security', '보안정책', '🛡️', '내 정보가 어떻게 보호되는지 확인해요.']
 ];
 let lastCat = 'hr';
-const curKey = () => view === 'work' ? 'work:' + (sub?.tab || 'schedule') : (view === 'manual' && sub?.edit === null ? 'manual:new' : view);
-const catOf = (key) => categories().find((c) => [...c.items, ...c.admin].some((i) => i[0] === key));
+const curKey = () => {
+  if (view === 'work') return 'work:' + (sub?.tab || 'schedule');
+  if (view === 'manual') {
+    if (sub?.edit === null) return 'm:new';
+    const id = sub?.edit ?? sub?.id;
+    if (id === '_check') return 'm:check';
+    if (id === '_home') return 'manual';
+    if (id) return 'mp:' + id;
+    return sub?.tab ? 'm:' + sub.tab : 'manual';
+  }
+  return view;
+};
+const catOf = (key) => categories().find((c) => (c.key === 'manual' && /^mp?:/.test(key)) || [...c.items, ...c.admin].some((i) => i[0] === key));
 function goKey(key) {
   if (key === 'work:schedule') return go('work', { tab: 'schedule' });
   if (key === 'work:leave') return go('work', { tab: 'leave' });
   if (key === 'work:all') return go('work', { tab: 'all' });
-  if (key === 'manual:new') return go('manual', { edit: null });
+  if (key === 'm:new') return go('manual', { edit: null });
+  if (key.startsWith('mp:')) return go('manual', { id: key.slice(3) });
+  if (key.startsWith('m:')) return go('manual', { tab: key.slice(2) });
   go(key);
 }
 
@@ -223,20 +241,22 @@ function shell(content) {
       </div>
     </header>
     <div class="body">
-      <aside class="side">
+      <aside class="side ${cat.key === 'manual' ? 'mcat' : ''}">
         <div class="sideTop">
           <div class="sideTitle">${cat.icon} ${cat.label}</div>
-          ${cat.items.map(btn).join('')}
+          ${cat.items.map((i) => i[0] === 'm:log' && mcache?.pending ? btn(i).replace('</button>', ` <span class="badgeN">${mcache.pending}</span></button>`) : btn(i)).join('')}
+          ${cat.key === 'manual' ? manualSide(key) : ''}
         </div>
         <div class="sideBottom">
           ${[...cat.admin, ...GLOBAL_ADMIN()].length ? `<div class="sideGroup"><div class="sideTitle">🔒 관리자 메뉴</div>${[...cat.admin, ...GLOBAL_ADMIN()].map(btn).join('')}</div>` : ''}
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
-      <main class="${['work:schedule', 'payroll', 'work:all', 'org'].includes(key) ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => goKey(cats.find((c) => c.key === b.dataset.cat).items[0][0]));
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
+  if (cat.key === 'manual') bindManualSide();
   document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
   document.getElementById('me').onclick = (e) => { e.preventDefault(); go('my'); };
   document.getElementById('out').onclick = () => signOut(auth);
@@ -575,65 +595,720 @@ async function renderPerson(uid) {
   });
 }
 
-// ---------- 매뉴얼 ----------
-async function renderManual() {
-  if (sub?.edit !== undefined) return renderManualEdit(sub.edit);
-  if (sub?.id) return renderManualView(sub.id);
-  const snap = await getDocs(query(collection(db, 'manuals'), orderBy('title')));
-  const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  shell(`
-    <div class="row between"><h1>매뉴얼</h1>${can.editManual() ? '<button id="new" class="primary">+ 새 매뉴얼</button>' : ''}</div>
-    <input id="q" class="search" placeholder="검색 (제목, 내용)" value="${esc(sub?.q || '')}">
-    <div class="list" id="ml"></div>`);
-  const draw = () => {
-    const q = val('q').toLowerCase();
-    const list = all.filter((m) => !q || (m.title + ' ' + m.body).toLowerCase().includes(q));
-    document.getElementById('ml').innerHTML = list.map((m) => `
-      <button class="item" data-m="${m.id}"><b>${esc(m.title)}</b><span class="muted sm">${esc((m.body || '').slice(0, 60))}</span></button>`).join('')
-      || `<p class="muted">${all.length ? '검색 결과가 없어요.' : '아직 매뉴얼이 없어요.'}</p>`;
-    $app.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => go('manual', { id: b.dataset.m }));
+// ---------- 원내매뉴얼 ----------
+// manuals/{id}: 페이지 {title, group, sub, code, order, body(HTML), updatedAt, updatedBy}  (_home, _check 은 특별 페이지)
+// manualMeta/tree: {groups:[{name}]} · manualImages/{id}: {data} · manualLog: 업데이트 기록/AI 제안
+// notes: 직원 성찰노트 · manualReqs: 개선 요청
+let mcache = null;            // { pages:{id:page}, tree, pending }
+const mimg = {};              // 이미지 캐시 id → dataURL
+const MTABS = { check: '진료 준비 체크리스트', notes: '직원 성찰노트', log: '매뉴얼 업데이트 리뷰', req: '개선 요청', admin: '목차·가져오기' };
+const REQ_ST = ['접수', '검토 중', '반영', '보류'];
+const today = () => ymd(new Date());
+const dstr = (t) => t?.toDate ? ymd(t.toDate()) : (t || '');
+
+async function loadManual(force = false) {
+  if (mcache && !force) return mcache;
+  const [ps, tr] = await Promise.all([getDocs(collection(db, 'manuals')), getDoc(doc(db, 'manualMeta', 'tree'))]);
+  const pages = {};
+  ps.docs.forEach((d) => {
+    const p = { id: d.id, ...d.data() };
+    if (p.body === undefined) p.body = '';
+    if (!p.html && !/<[a-z][\s\S]*>/i.test(p.body)) p.body = `<p>${esc(p.body).replace(/\n/g, '<br>')}</p>`;   // 예전 글
+    if (!p.group && !p.id.startsWith('_')) p.group = '기타';
+    pages[p.id] = p;
+  });
+  let pending = 0;
+  if (can.editManual()) {
+    try { pending = (await getDocs(query(collection(db, 'manualLog'), where('status', '==', 'pending')))).size; } catch (e) { /* 없음 */ }
+  }
+  const tree = tr.exists() ? tr.data() : { groups: [] };
+  // 트리에 없는 그룹도 보이게
+  const names = tree.groups.map((g) => g.name);
+  Object.values(pages).forEach((p) => { if (p.group && !names.includes(p.group)) { names.push(p.group); tree.groups.push({ name: p.group }); } });
+  mcache = { pages, tree, pending };
+  return mcache;
+}
+const mPages = () => Object.values(mcache?.pages || {}).filter((p) => !p.id.startsWith('_'));
+const mSort = (a, b) => (a.order ?? 9999) - (b.order ?? 9999) || a.title.localeCompare(b.title);
+const plainText = (html) => { const d = document.createElement('div'); d.innerHTML = html || ''; return d.textContent.replace(/\s+/g, ' ').trim(); };
+
+// 좌측 목차 (그룹은 열고 닫기)
+function manualSide(key) {
+  const c = mcache;
+  if (!c) return '';
+  let open = {};
+  try { open = JSON.parse(localStorage.getItem('mOpen') || '{}'); } catch (e) { /* 무시 */ }
+  const curId = key.startsWith('mp:') ? key.slice(3) : null;
+  const curG = curId && c.pages[curId]?.group;
+  const groups = c.tree.groups.map((g) => {
+    const ps = mPages().filter((p) => p.group === g.name).sort(mSort);
+    if (!ps.length && !can.editManual()) return '';
+    let lastSub = null;
+    const items = ps.map((p) => {
+      let h = '';
+      if ((p.sub || '') !== lastSub) { lastSub = p.sub || ''; if (lastSub) h += `<div class="msub">${esc(lastSub)}</div>`; }
+      return h + `<button data-k="mp:${p.id}" class="mi ${curId === p.id ? 'on' : ''}">${esc(p.title)}</button>`;
+    }).join('');
+    const isOpen = open[g.name] || curG === g.name;
+    return `<details class="mgrp" data-g="${esc(g.name)}" ${isOpen ? 'open' : ''}><summary>${esc(g.name)} <small>${ps.length}</small></summary>${items || '<p class="muted sm">페이지 없음</p>'}</details>`;
+  }).join('');
+  return `<div class="mtree"><details class="mtreeWrap" open><summary class="mtreeHead">📚 매뉴얼 목차</summary>
+    <input class="msearch" id="msearch" placeholder="🔍 매뉴얼 검색">
+    <div id="mresult"></div><div id="mgroups">${groups}</div></details></div>`;
+}
+function bindManualSide() {
+  document.querySelectorAll('details.mgrp').forEach((d) => d.addEventListener('toggle', () => {
+    let o = {}; try { o = JSON.parse(localStorage.getItem('mOpen') || '{}'); } catch (e) { /* 무시 */ }
+    o[d.dataset.g] = d.open; localStorage.setItem('mOpen', JSON.stringify(o));
+  }));
+  const s = document.getElementById('msearch');
+  if (!s) return;
+  if (window.innerWidth <= 760) document.querySelector('.mtreeWrap')?.removeAttribute('open');
+  s.oninput = () => {
+    const q = s.value.trim().toLowerCase();
+    const box = document.getElementById('mresult'), gs = document.getElementById('mgroups');
+    if (!q) { box.innerHTML = ''; gs.style.display = ''; return; }
+    gs.style.display = 'none';
+    const hits = mPages().filter((p) => (p.title + ' ' + (p._text ??= plainText(p.body))).toLowerCase().includes(q)).sort(mSort);
+    box.innerHTML = hits.map((p) => {
+      const t = p._text, i = t.toLowerCase().indexOf(q);
+      const snip = i >= 0 ? '…' + esc(t.slice(Math.max(0, i - 15), i + 30)) + '…' : '';
+      return `<button data-k="mp:${p.id}" class="mi"><b>${esc(p.title)}</b><small class="muted">${snip}</small></button>`;
+    }).join('') || '<p class="muted sm">검색 결과가 없어요.</p>';
+    box.querySelectorAll('[data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
   };
-  document.getElementById('q').oninput = draw; draw();
-  document.getElementById('new')?.addEventListener('click', () => go('manual', { edit: null }));
 }
 
-async function renderManualView(id) {
-  const d = await getDoc(doc(db, 'manuals', id));
-  if (!d.exists()) return go('manual');
-  const m = d.data();
-  const when = m.updatedAt?.toDate ? m.updatedAt.toDate().toLocaleDateString('ko-KR') : '';
-  shell(`
-    <button id="back" class="ghost">← 목록</button>
-    <h1>${esc(m.title)}</h1>
-    <p class="muted sm">${when ? '수정일 ' + when : ''}${m.updatedBy ? ' · ' + esc(m.updatedBy) : ''}</p>
-    <article class="card manual">${esc(m.body)}</article>
-    ${can.editManual() ? '<div class="row"><button id="edit">수정</button><button id="del" class="ghost danger">삭제</button></div>' : ''}`);
-  document.getElementById('back').onclick = () => go('manual');
-  document.getElementById('edit')?.addEventListener('click', () => go('manual', { edit: id }));
-  document.getElementById('del')?.addEventListener('click', async () => {
-    if (!confirm('이 매뉴얼을 삭제할까요? 되돌릴 수 없어요.')) return;
-    await deleteDoc(doc(db, 'manuals', id)); toast('삭제했어요'); go('manual');
+// 본문 안전하게 + 사진 불러오기 + 체크리스트
+function cleanHtml(html) {
+  const d = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
+  d.querySelectorAll('script,style,iframe,object,embed,link,meta').forEach((x) => x.remove());
+  d.querySelectorAll('*').forEach((el) => [...el.attributes].forEach((a) => {
+    if (/^on/i.test(a.name) || (/^(href|src)$/i.test(a.name) && /^\s*javascript:/i.test(a.value))) el.removeAttribute(a.name);
+  }));
+  return d.body.firstChild.innerHTML;
+}
+async function hydrateImages(root) {
+  for (const img of root.querySelectorAll('img[data-img]')) {
+    const id = img.dataset.img;
+    if (!mimg[id]) {
+      try { const d = await getDoc(doc(db, 'manualImages', id)); if (d.exists()) mimg[id] = d.data().data; } catch (e) { /* 무시 */ }
+    }
+    if (mimg[id]) img.src = mimg[id];
+  }
+}
+function bindChecks(root, pid) {
+  const key = `chk:${pid}:${today()}`;
+  let on = []; try { on = JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { /* 무시 */ }
+  const lis = [...root.querySelectorAll('ul.check > li')];
+  lis.forEach((li, i) => {
+    if (on.includes(i)) li.classList.add('on');
+    li.onclick = (e) => {
+      if (e.target.closest('a')) return;
+      li.classList.toggle('on');
+      const now = lis.map((x, j) => x.classList.contains('on') ? j : -1).filter((j) => j >= 0);
+      localStorage.setItem(key, JSON.stringify(now));
+      const p = root.querySelector('.chkProg'); if (p) p.textContent = `${now.length} / ${lis.length} 완료`;
+    };
   });
+  return lis.length;
+}
+
+async function renderManual() {
+  await loadManual();
+  if (sub?.edit !== undefined) return renderManualEdit(sub.edit);
+  if (sub?.id) return renderManualPage(sub.id);
+  const t = sub?.tab;
+  if (t === 'check') return renderManualPage('_check');
+  if (t === 'notes') return renderNotes();
+  if (t === 'log') return renderMLog();
+  if (t === 'req') return renderReqs();
+  if (t === 'admin' && can.editManual()) return renderMAdmin();
+  return renderManualPage('_home');
+}
+
+async function renderManualPage(id) {
+  const p = mcache.pages[id];
+  const special = id.startsWith('_');
+  if (!p) {
+    shell(`<h1>${id === '_home' ? '원내매뉴얼' : MTABS.check}</h1>
+      <section class="card"><p>아직 내용이 없어요.</p>
+      ${can.editManual() ? `<p class="muted sm">관리자 메뉴의 <b>목차·가져오기</b>에서 매뉴얼 파일을 가져오거나, 아래 버튼으로 직접 쓸 수 있어요.</p><button class="primary" id="mk">✏️ 직접 쓰기</button>` : ''}</section>`);
+    document.getElementById('mk')?.addEventListener('click', () => go('manual', { edit: id }));
+    return;
+  }
+  const crumb = special ? '원내매뉴얼' : `원내매뉴얼 / ${esc(p.group)}${p.sub ? ' / ' + esc(p.sub) : ''}`;
+  shell(`
+    <div class="crumb">${crumb}</div>
+    <div class="row between mhead"><h1>${esc(p.title)}${p.code ? ` <small class="code">${esc(p.code)}</small>` : ''}</h1>
+      ${can.editManual() ? '<button id="edit">✏️ 편집</button>' : ''}</div>
+    <p class="muted sm">${p.updatedAt ? '최종 수정 ' + dstr(p.updatedAt) : ''}${p.updatedBy ? ' · ' + esc(p.updatedBy) : ''}<span class="chkProg"></span></p>
+    <article class="mdoc" id="mdoc">${cleanHtml(p.body)}</article>
+    ${special ? '' : `<div class="row mfoot"><button id="note">📝 이 매뉴얼로 성찰노트 쓰기</button><button id="req" class="ghost">💬 개선 요청하기</button></div>
+    <section class="card"><h3>🔄 이 페이지 업데이트 기록</h3><div id="plog" class="muted sm">불러오는 중…</div></section>`}`);
+  const root = document.getElementById('mdoc');
+  const n = bindChecks(root, id);
+  if (n) { const pr = document.querySelector('.chkProg'); pr.textContent = ` · 체크 ${root.querySelectorAll('ul.check > li.on').length} / ${n} 완료`; root.classList.add('hasChk'); }
+  hydrateImages(root);
+  document.getElementById('edit')?.addEventListener('click', () => go('manual', { edit: id }));
+  document.getElementById('note')?.addEventListener('click', () => go('manual', { tab: 'notes', write: id }));
+  document.getElementById('req')?.addEventListener('click', () => go('manual', { tab: 'req', write: id }));
+  if (!special) {
+    const logs = await getMLogs();
+    const mine = logs.filter((l) => l.pageId === id && l.status === 'applied');
+    document.getElementById('plog').innerHTML = mine.map((l) => `<div class="logRow"><b>${dstr(l.at)}</b> ${esc(l.summary)}${l.basis ? ` <span class="cite2">(근거: ${esc(l.basis)})</span>` : ''} <span class="muted">· ${esc(l.by || '')}</span></div>`).join('') || '아직 기록이 없어요.';
+  }
+}
+
+// ---------- 편집기 ----------
+const EFONTS = [['', '글꼴'], ...Object.values(FONTS).map((f) => [f.family, f.label]), ['"Nanum Myeongjo", serif', '명조']];
+function editorToolbar() {
+  return `<div class="etb" id="etb">
+    <select data-cmd="formatBlock" title="문단"><option value="">문단</option><option value="p">본문</option><option value="h2">큰 제목</option><option value="h3">작은 제목</option></select>
+    <select data-cmd="fontName" title="글꼴">${EFONTS.map(([v, l]) => `<option value='${v}'>${l}</option>`).join('')}</select>
+    <select data-cmd="fontSize" title="글자 크기"><option value="">크기</option><option value="2">작게</option><option value="3">보통</option><option value="4">크게</option><option value="5">아주 크게</option></select>
+    <span class="sep"></span>
+    <button data-cmd="bold" title="굵게"><b>B</b></button><button data-cmd="italic" title="기울임"><i>I</i></button><button data-cmd="underline" title="밑줄"><u>U</u></button><button data-cmd="strikeThrough" title="취소선"><s>S</s></button>
+    <label class="cpick" title="글자색">가<input type="color" data-cmd="foreColor" value="#c0392b"></label>
+    <label class="cpick bg" title="배경색">배경<input type="color" data-cmd="hiliteColor" value="#fff3a3"></label>
+    <span class="sep"></span>
+    <button data-cmd="insertUnorderedList" title="글머리 목록">• 목록</button><button data-cmd="insertOrderedList" title="번호 목록">1. 목록</button>
+    <button data-x="check" title="체크리스트">☑ 체크</button><button data-x="step" title="번호 단계">① 단계</button>
+    <span class="sep"></span>
+    <button data-x="box:info" class="bx info" title="파란 상자: 핵심">파란 상자</button><button data-x="box:tip" class="bx tip" title="초록 상자: 실습">초록 상자</button><button data-x="box:warn" class="bx warn" title="노란 상자: 원장님 확인 전">⚠️ 확인 필요</button><button data-x="unbox" title="상자 없애기">상자 빼기</button>
+    <button data-x="cite" title="괄호로 근거·날짜 표시">(근거)</button>
+    <span class="sep"></span>
+    <label class="upload sm" title="사진 넣기">🖼️ 사진<input type="file" accept="image/*" id="eimg" hidden></label>
+    <select data-x="imgsize" title="선택한 사진 크기"><option value="">사진 크기</option><option value="30%">작게</option><option value="55%">중간</option><option value="100%">크게</option></select>
+    <button data-x="table" title="표 넣기">표</button><button data-x="hr" title="구분선">구분선</button>
+    <span class="sep"></span>
+    <button data-cmd="removeFormat" title="서식 지우기">서식 지우기</button><button data-cmd="undo" title="되돌리기">↶</button><button data-cmd="redo" title="다시">↷</button>
+  </div>`;
+}
+function compressImage(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let max = 1400, q = 0.82, out = '';
+      do {
+        const s = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+        const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+        out = c.toDataURL('image/jpeg', q); max *= 0.8; q -= 0.06;
+      } while (out.length > 700000 && max > 300);
+      resolve(out);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+function bindEditor(ed, newImgs) {
+  document.execCommand('styleWithCSS', false, true);
+  document.execCommand('defaultParagraphSeparator', false, 'p');
+  let lastImg = null, range = null;
+  const keep = () => { const s = getSelection(); if (s.rangeCount && ed.contains(s.anchorNode)) range = s.getRangeAt(0).cloneRange(); };
+  const restore = () => { ed.focus(); if (range) { const s = getSelection(); s.removeAllRanges(); s.addRange(range); } };
+  ed.addEventListener('keyup', keep); ed.addEventListener('mouseup', keep);
+  ed.addEventListener('click', (e) => {
+    ed.querySelectorAll('img.sel').forEach((x) => x.classList.remove('sel'));
+    if (e.target.tagName === 'IMG') { lastImg = e.target; lastImg.classList.add('sel'); }
+  });
+  const blockOf = (n) => { while (n && n !== ed && !(n.nodeType === 1 && /^(P|H2|H3|H4|UL|OL|DIV|TABLE|FIGURE|BLOCKQUOTE)$/.test(n.tagName) && n.parentNode === ed || (n.parentNode?.classList?.contains('box') && n.nodeType === 1))) n = n.parentNode; return n === ed ? null : n; };
+  const topBlock = (n) => { while (n && n.parentNode !== ed) n = n.parentNode; return n; };
+  const insertHTML = (h) => { restore(); document.execCommand('insertHTML', false, h); keep(); };
+  document.querySelectorAll('#etb [data-cmd]').forEach((el) => {
+    const run = () => {
+      restore();
+      const v = el.tagName === 'BUTTON' ? null : el.value;
+      if (el.tagName === 'SELECT' && !v) return;
+      document.execCommand(el.dataset.cmd, false, el.dataset.cmd === 'formatBlock' ? `<${v}>` : v);
+      if (el.tagName === 'SELECT') el.value = '';
+      keep();
+    };
+    if (el.tagName === 'BUTTON') { el.onmousedown = (e) => e.preventDefault(); el.onclick = run; } else el.onchange = run;
+  });
+  document.querySelectorAll('#etb [data-x]').forEach((el) => {
+    const x = el.dataset.x;
+    const run = () => {
+      if (x === 'imgsize') { if (lastImg && el.value) lastImg.style.width = el.value; el.value = ''; return; }
+      restore();
+      const sel = getSelection();
+      const node = sel.anchorNode;
+      if (x === 'check') {
+        const ul = node && (node.nodeType === 1 ? node : node.parentNode).closest?.('ul');
+        if (ul && ed.contains(ul)) ul.classList.toggle('check');
+        else insertHTML('<ul class="check"><li>할 일</li></ul><p><br></p>');
+      } else if (x === 'step') {
+        const n = ed.querySelectorAll('.step').length + 1;
+        insertHTML(`<div class="step"><span class="sn">${String(n).padStart(2, '0')}</span><div>내용을 쓰세요</div></div><p><br></p>`);
+      } else if (x.startsWith('box:')) {
+        const kind = x.slice(4);
+        const tb = node && topBlock(node);
+        if (tb && tb.classList?.contains('box')) { tb.className = 'box ' + kind; return; }
+        const text = sel.toString();
+        const head = kind === 'warn' ? '<p><b>⚠️ 원장님 확인 전이에요. 확정된 기준으로 쓰지 마세요.</b></p>' : '';
+        if (tb && !text) { const box = document.createElement('div'); box.className = 'box ' + kind; box.innerHTML = head; tb.replaceWith(box); box.appendChild(tb); }
+        else insertHTML(`<div class="box ${kind}">${head}<p>${text ? esc(text) : '내용을 쓰세요'}</p></div><p><br></p>`);
+      } else if (x === 'unbox') {
+        const tb = node && topBlock(node);
+        if (tb?.classList?.contains('box')) tb.replaceWith(...tb.childNodes);
+      } else if (x === 'cite') {
+        const b = prompt('근거를 적어 주세요 (예: 성찰노트 11/20, 원장님 지시, 제품 설명서)', '');
+        if (b === null) return;
+        insertHTML(` <span class="cite2">(${today()} 추가${b ? ' · 근거: ' + esc(b) : ''})</span>&nbsp;`);
+      } else if (x === 'table') {
+        insertHTML('<table class="mt"><thead><tr><th>항목</th><th>내용</th><th>비고</th></tr></thead><tbody><tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr></tbody></table><p><br></p>');
+      } else if (x === 'hr') insertHTML('<hr><p><br></p>');
+    };
+    if (el.tagName === 'BUTTON') { el.onmousedown = (e) => e.preventDefault(); el.onclick = run; } else el.onchange = run;
+  });
+  document.getElementById('eimg').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    toast('사진을 줄이는 중…');
+    const data = await compressImage(f);
+    const id = 'img-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    newImgs[id] = data; mimg[id] = data;
+    insertHTML(`<figure><img data-img="${id}" src="${data}" alt="" style="width:55%"><figcaption>사진 설명</figcaption></figure><p><br></p>`);
+    e.target.value = '';
+  };
+  void blockOf;
+}
+function bodyForSave(ed) {
+  const c = ed.cloneNode(true);
+  c.querySelectorAll('img[data-img]').forEach((i) => { i.removeAttribute('src'); i.classList.remove('sel'); });
+  c.querySelectorAll('img:not([data-img])').forEach((i) => { if ((i.getAttribute('src') || '').startsWith('data:') && i.src.length > 200000) i.remove(); });
+  return cleanHtml(c.innerHTML);
+}
+async function saveImages(newImgs, body) {
+  for (const [id, data] of Object.entries(newImgs)) if (body.includes(id)) await setDoc(doc(db, 'manualImages', id), { data, at: serverTimestamp() });
+}
+async function addMLog(e) {
+  await addDoc(collection(db, 'manualLog'), { status: 'applied', by: me.name, at: serverTimestamp(), date: today(), ...e });
+  mlogs = null;
 }
 
 async function renderManualEdit(id) {
-  let m = { title: '', body: '' };
-  if (id) { const d = await getDoc(doc(db, 'manuals', id)); if (d.exists()) m = d.data(); }
+  const isNew = id === null;
+  const p = isNew ? { title: '', group: sub?.group || mcache.tree.groups[0]?.name || '공통', sub: '', body: '<p></p>' } : (mcache.pages[id] || { title: id === '_home' ? '홈' : MTABS.check, body: '<p></p>' });
+  const special = id?.startsWith('_');
+  const groups = mcache.tree.groups.map((g) => g.name);
+  const subs = [...new Set(mPages().map((x) => x.sub).filter(Boolean))];
   shell(`
-    <button id="back" class="ghost">← 취소</button>
-    <h1>${id ? '매뉴얼 수정' : '새 매뉴얼'}</h1>
-    <section class="card form">
-      <label>제목<input id="title" value="${esc(m.title)}"></label>
-      <label>내용<textarea id="body" rows="16">${esc(m.body)}</textarea></label>
+    <div class="crumb">원내매뉴얼 / ${isNew ? '새 페이지' : '편집'}</div>
+    <h1>${isNew ? '새 매뉴얼 페이지' : '✏️ ' + esc(p.title) + ' 편집'}</h1>
+    <section class="card form mform">
+      <label>제목<input id="mt" value="${esc(p.title)}"></label>
+      ${special ? '' : `<div class="row">
+        <label>큰 제목(그룹)<select id="mg">${groups.map((g) => `<option ${g === p.group ? 'selected' : ''}>${esc(g)}</option>`).join('')}<option value="__new">+ 새 그룹…</option></select></label>
+        <label>작은 제목 (선택)<input id="ms" list="msubs" value="${esc(p.sub || '')}" placeholder="예: 근관치료"><datalist id="msubs">${subs.map((s) => `<option value="${esc(s)}">`).join('')}</datalist></label>
+        <label>번호 (선택)<input id="mc" value="${esc(p.code || '')}" placeholder="예: 04.01"></label></div>`}
     </section>
-    <button id="save" class="primary">저장</button>`);
-  document.getElementById('back').onclick = () => go('manual', id ? { id } : null);
+    ${editorToolbar()}
+    <div class="mdoc editor" id="ed" contenteditable="true">${cleanHtml(p.body)}</div>
+    <section class="card form">
+      <label>무엇이 바뀌었나요? <small class="muted">(매뉴얼 업데이트 리뷰에 기록돼요)</small><input id="msum" placeholder="${isNew ? '새 페이지 추가' : '예: 러버댐 클램프 선택 기준 추가'}"></label>
+      <label>근거 (선택)<input id="mbasis" placeholder="예: 성찰노트 11/20, 원장님 지시, 제품 설명서"></label>
+    </section>
+    <div class="row"><button class="primary" id="save">저장</button><button class="ghost" id="cancel">취소</button>${!isNew && !special ? '<button class="ghost danger" id="del">🗑️ 페이지 삭제</button>' : ''}</div>`);
+  const ed = document.getElementById('ed');
+  const newImgs = {};
+  hydrateImages(ed);
+  bindEditor(ed, newImgs);
+  document.getElementById('mg')?.addEventListener('change', (e) => {
+    if (e.target.value !== '__new') return;
+    const n = prompt('새 그룹 이름');
+    if (!n) { e.target.value = groups[0]; return; }
+    const o = document.createElement('option'); o.textContent = n; o.selected = true; e.target.insertBefore(o, e.target.lastChild);
+  });
+  document.getElementById('cancel').onclick = () => go('manual', isNew ? null : id.startsWith('_') ? (id === '_home' ? null : { tab: 'check' }) : { id });
+  document.getElementById('del')?.addEventListener('click', async () => {
+    if (!confirm(`"${p.title}" 페이지를 삭제할까요? 되돌릴 수 없어요.`)) return;
+    await deleteDoc(doc(db, 'manuals', id));
+    await addMLog({ pageId: id, title: p.title, summary: '페이지 삭제' });
+    toast('삭제했어요'); await loadManual(true); go('manual');
+  });
   document.getElementById('save').onclick = async () => {
-    const data = { title: val('title') || '제목 없음', body: document.getElementById('body').value, updatedAt: serverTimestamp(), updatedBy: me.name };
-    if (id) await setDoc(doc(db, 'manuals', id), data);
-    else { const r = await addDoc(collection(db, 'manuals'), data); id = r.id; }
-    toast('저장했어요'); go('manual', { id });
+    const btn = document.getElementById('save'); btn.disabled = true;
+    try {
+      const body = bodyForSave(ed);
+      if (body.length > 900000) { alert('페이지가 너무 커요. 내용을 두 페이지로 나눠 주세요.'); btn.disabled = false; return; }
+      const title = val('mt') || '제목 없음';
+      const data = { title, body, updatedAt: serverTimestamp(), updatedBy: me.name };
+      if (!special) {
+        const g = document.getElementById('mg').value;
+        Object.assign(data, { group: g, sub: val('ms'), code: val('mc') });
+        if (!mcache.tree.groups.some((x) => x.name === g)) { mcache.tree.groups.push({ name: g }); await setDoc(doc(db, 'manualMeta', 'tree'), { groups: mcache.tree.groups }); }
+        if (isNew) data.order = Math.max(0, ...mPages().map((x) => x.order ?? 0)) + 1;
+      }
+      await saveImages(newImgs, body);
+      let pid = id;
+      if (isNew) pid = (await addDoc(collection(db, 'manuals'), data)).id;
+      else await setDoc(doc(db, 'manuals', id), data, { merge: true });
+      await addMLog({ pageId: pid, title, summary: val('msum') || (isNew ? '새 페이지 추가' : '내용 수정'), basis: val('mbasis') });
+      toast('저장했어요'); await loadManual(true);
+      go('manual', pid === '_home' ? null : pid === '_check' ? { tab: 'check' } : { id: pid });
+    } catch (e) { console.error(e); alert('저장하지 못했어요: ' + (e.code || e.message)); btn.disabled = false; }
   };
+}
+
+// ---------- 업데이트 기록 ----------
+let mlogs = null;
+async function getMLogs() {
+  if (mlogs) return mlogs;
+  const s = await getDocs(query(collection(db, 'manualLog'), orderBy('at', 'desc')));
+  mlogs = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return mlogs;
+}
+// 제목(afterHeading) 아래 단락 끝에 내용 넣기
+function insertAfterHeading(body, after, html) {
+  const d = document.createElement('div'); d.innerHTML = body;
+  const hs = [...d.querySelectorAll('h2,h3')];
+  const norm = (s) => s.replace(/\s+/g, '').replace(/^part\d+\./i, '').toLowerCase();
+  const h = after ? hs.find((x) => norm(x.textContent) === norm(after)) || hs.find((x) => norm(x.textContent).includes(norm(after))) : null;
+  const frag = document.createElement('div'); frag.innerHTML = html;
+  if (!h) { d.append(...frag.childNodes); return d.innerHTML; }
+  const lvl = Number(h.tagName[1]);
+  let n = h;
+  while (n.nextElementSibling && !(/^H[23]$/.test(n.nextElementSibling.tagName) && Number(n.nextElementSibling.tagName[1]) <= lvl) && !n.nextElementSibling.matches('.refs')) n = n.nextElementSibling;
+  n.after(...frag.childNodes);
+  return d.innerHTML;
+}
+function proposalHtml(c) {
+  const tag = ` <span class="cite2">(${today()} 추가${c.basis ? ' · 근거: ' + esc(c.basis) : ''})</span>`;
+  let h = cleanHtml(c.html || '');
+  if (!/<[a-z]/i.test(h)) h = `<p>${esc(c.html || '')}</p>`;
+  h = h.replace(/(<\/(p|li|div)>)(?![\s\S]*<\/(p|li|div)>)/, tag + '$1');
+  if (!h.includes('cite2')) h += `<p>${tag}</p>`;
+  if (c.needsCheck) h = `<div class="box warn"><p><b>⚠️ 원장님 확인 전이에요. 확정된 기준으로 쓰지 마세요.</b></p>${h}</div>`;
+  return h;
+}
+
+async function renderMLog() {
+  const logs = await getMLogs();
+  const admin = can.editManual();
+  const pend = logs.filter((l) => l.status === 'pending');
+  const done = logs.filter((l) => l.status === 'applied');
+  const pageLink = (l) => mcache.pages[l.pageId] ? `<a href="#" data-pg="${l.pageId}">${esc(l.title || mcache.pages[l.pageId].title)}</a>` : esc(l.title || '');
+  shell(`
+    <div class="crumb">원내매뉴얼</div>
+    <div class="row between"><div><h1>🔄 매뉴얼 업데이트 리뷰</h1>
+      <p class="muted">언제, 어떤 내용이, 왜 바뀌었는지 기록돼요.${admin ? ' AI가 제안한 내용은 승인해야 매뉴얼에 반영돼요.' : ''}</p></div>
+      ${admin ? '<button class="primary" id="ai">🤖 AI로 내용 추가</button>' : ''}</div>
+    ${admin ? `<section class="card"><div class="row between"><h3>승인 대기 ${pend.length}건</h3>${pend.length > 1 ? '<button class="primary sm" id="allOk">전체 승인</button>' : ''}</div>
+      ${pend.length ? pend.map((l) => `
+        <div class="prop" data-id="${l.id}">
+          <div class="row between"><div><b>${esc(l.title)}</b> <span class="muted sm">· ${esc(l.date || '')} · ${esc(l.by || '')}</span></div>
+            <div class="row"><button class="primary sm" data-ok="${l.id}">✅ 승인</button><button class="ghost sm" data-no="${l.id}">✕ 거절</button></div></div>
+          <div class="box info"><p><b>변경 요약:</b> ${esc(l.summary)}${l.basis ? ` <span class="cite2">(근거: ${esc(l.basis)})</span>` : ''}</p></div>
+          <div class="tabs"><button class="on" data-v="new">새 버전 (AI 제안)</button><button data-v="cur">현재 버전</button></div>
+          <div class="mdoc propView" data-new></div><div class="mdoc propView" data-cur hidden></div>
+        </div>`).join('') : '<div class="empty">✅ 승인 대기 중인 업데이트가 없어요.</div>'}</section>` : ''}
+    <section class="card"><h3>업데이트 기록</h3>
+      <table class="mt logT"><thead><tr><th>날짜</th><th>매뉴얼</th><th>바뀐 내용</th><th>근거</th><th>작성</th></tr></thead><tbody>
+      ${done.map((l) => `<tr><td class="nowrap">${dstr(l.at) || esc(l.date || '')}</td><td>${pageLink(l)}</td><td>${esc(l.summary)}</td><td>${esc(l.basis || '')}</td><td class="nowrap">${esc(l.by || '')}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">아직 기록이 없어요.</td></tr>'}
+      </tbody></table></section>`);
+  $app.querySelectorAll('[data-pg]').forEach((a) => a.onclick = (e) => { e.preventDefault(); go('manual', { id: a.dataset.pg }); });
+  if (!admin) return;
+  document.getElementById('ai').onclick = () => aiBridge();
+  const newBody = (l) => { const p = mcache.pages[l.pageId]; return insertAfterHeading(p?.body || '', l.after, l.html); };
+  for (const l of pend) {
+    const box = $app.querySelector(`.prop[data-id="${l.id}"]`);
+    const nv = box.querySelector('[data-new]'), cv = box.querySelector('[data-cur]');
+    const nb = newBody(l);
+    nv.innerHTML = cleanHtml(nb); cv.innerHTML = cleanHtml(mcache.pages[l.pageId]?.body || '<p class="muted">새 페이지</p>');
+    [...nv.querySelectorAll('span.cite2')].filter((s) => s.textContent.includes(today() + ' 추가')).forEach((s) => s.closest('p,li,div')?.classList.add('newHi'));
+    const hi = nv.querySelector('.newHi');
+    if (hi) setTimeout(() => { nv.scrollTop += hi.getBoundingClientRect().top - nv.getBoundingClientRect().top - 60; }, 50);
+    hydrateImages(nv); hydrateImages(cv);
+    box.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
+      box.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
+      nv.hidden = b.dataset.v !== 'new'; cv.hidden = b.dataset.v === 'new';
+    });
+  }
+  const approve = async (l) => {
+    const p = mcache.pages[l.pageId];
+    if (!p) { alert(`"${l.title}" 페이지를 찾을 수 없어요.`); return false; }
+    const body = insertAfterHeading(p.body, l.after, l.html);
+    await setDoc(doc(db, 'manuals', l.pageId), { body, updatedAt: serverTimestamp(), updatedBy: me.name + ' (AI 제안 승인)' }, { merge: true });
+    p.body = body;
+    await updateDoc(doc(db, 'manualLog', l.id), { status: 'applied', at: serverTimestamp(), approvedBy: me.name });
+    for (const s of l.sources || []) { try { await updateDoc(doc(db, s.col, s.id), s.col === 'notes' ? { reflected: true } : { status: '반영' }); } catch (e) { /* 무시 */ } }
+    return true;
+  };
+  $app.querySelectorAll('[data-ok]').forEach((b) => b.onclick = async () => {
+    b.disabled = true;
+    if (await approve(pend.find((l) => l.id === b.dataset.ok))) { toast('매뉴얼에 반영했어요'); mlogs = null; await loadManual(true); renderMLog(); }
+  });
+  $app.querySelectorAll('[data-no]').forEach((b) => b.onclick = async () => {
+    if (!confirm('이 제안을 거절할까요?')) return;
+    await deleteDoc(doc(db, 'manualLog', b.dataset.no)); mlogs = null; toast('거절했어요'); await loadManual(true); renderMLog();
+  });
+  document.getElementById('allOk')?.addEventListener('click', async () => {
+    if (!confirm(`${pend.length}건을 모두 승인할까요?`)) return;
+    for (const l of pend) await approve(l);
+    toast('모두 반영했어요'); mlogs = null; await loadManual(true); renderMLog();
+  });
+}
+
+// AI로 내용 추가: 성찰노트·개선요청 → Claude에게 보낼 글 복사 → 답 붙여넣기 → 승인 대기
+async function aiBridge() {
+  const [ns, rs] = await Promise.all([getDocs(collection(db, 'notes')), getDocs(collection(db, 'manualReqs'))]);
+  const notes = ns.docs.map((d) => ({ id: d.id, ...d.data() })).filter((n) => !n.reflected);
+  const reqs = rs.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => !['반영', '보류'].includes(r.status));
+  const w = document.createElement('div'); w.className = 'modal';
+  const item = (col, x, label) => `<label class="aiItem"><input type="checkbox" data-col="${col}" data-id="${x.id}" checked> <span><b>${label}</b> ${esc(x.name || '')} · ${esc(x.date || '')}${x.pageTitle ? ' · ' + esc(x.pageTitle) : ''}<br><small>${esc(((x.mistake || x.text || '') + (x.plan ? ' / 개선: ' + x.plan : '') + (x.feedback ? ' / 피드백: ' + x.feedback : '')).slice(0, 140))}</small></span></label>`;
+  w.innerHTML = `<div class="modalBox">
+    <h2>🤖 AI로 내용 추가</h2>
+    <p class="muted sm">선택한 성찰노트·개선 요청을 바탕으로 AI가 매뉴얼의 알맞은 위치에 넣을 내용을 제안해요. 제안은 <b>승인해야</b> 반영돼요.</p>
+    <h3>1. 반영할 내용 고르기</h3>
+    <div class="aiList">${notes.map((n) => item('notes', n, '📝 성찰노트')).join('')}${reqs.map((r) => item('manualReqs', r, '💬 개선 요청')).join('') || ''}
+      ${!notes.length && !reqs.length ? '<p class="muted">아직 반영하지 않은 성찰노트·개선 요청이 없어요.</p>' : ''}</div>
+    <label>원장님 추가 지시 (선택)<textarea id="aiMore" rows="3" placeholder="예: 러버댐 페이지에 클램프 보관 위치는 2번 서랍이라고 추가해 줘"></textarea></label>
+    <h3>2. 복사해서 Claude에게 보내기</h3>
+    <p class="muted sm">아래 버튼을 누르면 내용이 복사돼요. Claude 대화창에 붙여넣고 보내세요.</p>
+    <button class="primary" id="aiCopy">📋 Claude에게 보낼 내용 복사</button>
+    <h3>3. Claude의 답 붙여넣기</h3>
+    <textarea id="aiAns" rows="6" placeholder="Claude가 준 답(코드 블록 포함)을 그대로 붙여넣으세요"></textarea>
+    <div class="row"><button class="primary" id="aiMake">제안 만들기</button><button class="ghost" id="aiClose">닫기</button></div>
+  </div>`;
+  document.body.appendChild(w);
+  document.getElementById('aiClose').onclick = () => w.remove();
+  const chosen = () => [...w.querySelectorAll('.aiList input:checked')].map((c) => {
+    const src = c.dataset.col === 'notes' ? notes : reqs;
+    return { col: c.dataset.col, ...src.find((x) => x.id === c.dataset.id) };
+  });
+  document.getElementById('aiCopy').onclick = async () => {
+    const items = chosen(); const more = document.getElementById('aiMore').value.trim();
+    if (!items.length && !more) { alert('반영할 내용을 고르거나 추가 지시를 써 주세요.'); return; }
+    const outline = mPages().sort(mSort).map((p) => {
+      const d = document.createElement('div'); d.innerHTML = p.body;
+      return `- id=${p.id} | ${p.group}${p.sub ? ' > ' + p.sub : ''} > ${p.title} | 소제목: ${[...d.querySelectorAll('h2,h3')].map((h) => h.textContent.trim()).join(' / ')}`;
+    }).join('\n');
+    const related = [...new Set(items.map((i) => i.pageId).filter(Boolean))].map((id) => mcache.pages[id]).filter(Boolean)
+      .map((p) => `### ${p.title} (id=${p.id})\n${plainText(p.body).slice(0, 3500)}`).join('\n\n');
+    const fb = items.map((i, k) => `[${k + 1}] ${i.col === 'notes' ? '성찰노트' : '개선요청'} · ${i.name || ''} · ${i.date || ''}${i.pageTitle ? ' · 관련: ' + i.pageTitle : ''}\n${i.mistake ? '실수·지적: ' + i.mistake + '\n' : ''}${i.plan ? '개선 계획: ' + i.plan + '\n' : ''}${i.text ? '내용: ' + i.text + '\n' : ''}${i.feedback ? '원장님 피드백: ' + i.feedback + '\n' : ''}`).join('\n');
+    const prompt = `너는 치과 원내 매뉴얼 편집자야. 아래 직원 피드백을 매뉴얼의 알맞은 페이지·소제목 아래에 넣을 내용으로 정리해 줘.
+
+규칙
+- 이미 매뉴얼에 있는 내용과 겹치면 넣지 마.
+- 직원 실명은 본문에 쓰지 말고, basis(근거)에만 "성찰노트 11/20"처럼 짧게 써.
+- 문장은 짧고 쉽게, "~해요"체. 필요하면 <p>, <ul><li>, <ul class="check"><li> (체크리스트), <b> 만 써.
+- 원장님 확인이 필요한 임상 판단·수치는 needsCheck: true 로 표시해.
+- afterHeading 에는 아래 목차의 소제목 글자를 그대로 써. 맞는 소제목이 없으면 null(페이지 끝).
+
+답은 아래 형식의 JSON 코드 블록 하나로만 줘.
+\`\`\`json
+{"changes":[{"pageId":"03-00","afterHeading":"Part 3. 진료 흐름과 어시스트","html":"<p>…</p>","summary":"무엇을 추가했는지 한 줄","basis":"성찰노트 11/20","needsCheck":false,"items":[1]}]}
+\`\`\`
+(items 는 아래 피드백 번호)
+
+## 피드백
+${fb || '(없음)'}
+${more ? '\n## 원장님 추가 지시\n' + more + '\n' : ''}
+## 매뉴얼 목차
+${outline}
+${related ? '\n## 관련 페이지 본문\n' + related : ''}`;
+    try { await navigator.clipboard.writeText(prompt); toast('복사했어요. Claude 대화창에 붙여넣으세요'); }
+    catch (e) { const t = document.getElementById('aiAns'); t.value = prompt; t.select(); alert('자동 복사가 안 돼서 아래 칸에 넣었어요. 전체 선택 후 복사(Ctrl+C)해 주세요.'); }
+    w.dataset.items = JSON.stringify(items.map((i) => ({ col: i.col, id: i.id })));
+  };
+  document.getElementById('aiMake').onclick = async () => {
+    const raw = document.getElementById('aiAns').value;
+    const m = raw.match(/```(?:json)?\s*([\s\S]*?)```/) || raw.match(/(\{[\s\S]*\})/);
+    let data;
+    try { data = JSON.parse(m ? m[1] : raw); } catch (e) { alert('답을 읽지 못했어요. Claude 답의 코드 블록을 그대로 붙여넣어 주세요.'); return; }
+    const items = JSON.parse(w.dataset.items || '[]');
+    let n = 0;
+    for (const c of data.changes || []) {
+      const p = mcache.pages[c.pageId];
+      if (!p) continue;
+      const sources = (c.items || []).map((k) => items[k - 1]).filter(Boolean);
+      await addDoc(collection(db, 'manualLog'), {
+        status: 'pending', pageId: c.pageId, title: p.title, after: c.afterHeading || null, html: proposalHtml(c),
+        summary: c.summary || '내용 추가', basis: c.basis || '', sources, by: 'AI 제안', date: today(), at: serverTimestamp()
+      });
+      n++;
+    }
+    w.remove(); mlogs = null;
+    toast(n ? `${n}건의 제안을 만들었어요. 확인 후 승인해 주세요` : '만들 제안이 없어요');
+    await loadManual(true); renderMLog();
+  };
+}
+
+// ---------- 직원 성찰노트 ----------
+async function renderNotes() {
+  const s = await getDocs(query(collection(db, 'notes'), orderBy('at', 'desc')));
+  const all = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const boss = canApprove();
+  const f = sub?.who || '전체';
+  const counts = {}; all.forEach((n) => counts[n.name] = (counts[n.name] || 0) + 1);
+  const list = all.filter((n) => f === '전체' || n.name === f);
+  const pageOpts = (sel) => `<option value="">(선택 안 함)</option>` + mcache.tree.groups.map((g) => `<optgroup label="${esc(g.name)}">${mPages().filter((p) => p.group === g.name).sort(mSort).map((p) => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</optgroup>`).join('');
+  shell(`
+    <div class="crumb">원내매뉴얼</div>
+    <h1>📝 직원 성찰노트</h1>
+    <p class="muted">실수하거나 지적받은 내용, 앞으로의 개선 계획을 적어요. 평가가 아니라 <b>매뉴얼을 함께 키우는 재료</b>예요.</p>
+    <details class="card" id="wbox" ${sub?.write ? 'open' : ''}><summary class="primaryLink">✍️ 성찰노트 쓰기</summary>
+      <div class="form">
+        <label>관련 매뉴얼 (선택)<select id="np">${pageOpts(sub?.write || '')}</select></label>
+        <label>실수·지적 내용<textarea id="nm" rows="4"></textarea></label>
+        <label>개선 계획<textarea id="npl" rows="3"></textarea></label>
+        <button class="primary" id="nsave">저장</button>
+      </div></details>
+    <div class="chips noteChips"><button data-w="전체" class="${f === '전체' ? 'on' : ''}">전체 (${all.length})</button>${Object.entries(counts).map(([n, c]) => `<button data-w="${esc(n)}" class="${f === n ? 'on' : ''}">${esc(n)} (${c})</button>`).join('')}</div>
+    ${list.map((n) => `
+      <section class="card note" data-id="${n.id}">
+        <div class="row between"><b class="nname">${esc(n.name)}</b><span class="muted sm">${esc(n.date || dstr(n.at))}${n.reflected ? ' · <span class="tag">매뉴얼 반영됨</span>' : ''}</span></div>
+        ${n.pageId && mcache.pages[n.pageId] ? `<a href="#" class="sm" data-pg="${n.pageId}">📘 ${esc(mcache.pages[n.pageId].title)}</a>` : ''}
+        <div class="nlab">실수·지적 내용</div><div class="ntext">${esc(n.mistake)}</div>
+        ${n.plan ? `<div class="nlab">개선 계획</div><div class="ntext">${esc(n.plan)}</div>` : ''}
+        ${n.feedback && !boss ? `<div class="box tip"><p><b>💬 피드백</b> <span class="muted sm">${esc(n.feedbackBy || '')}</span></p><div class="ntext">${esc(n.feedback)}</div></div>` : ''}
+        ${boss ? `<textarea class="fb" rows="2" placeholder="피드백 남기기 (저장 전까지 직원에게 안 보여요)">${esc(n.feedback || '')}</textarea>
+          <div class="row"><button class="primary sm" data-fb="${n.id}">피드백 저장</button><label class="chk sm"><input type="checkbox" data-rf="${n.id}" ${n.reflected ? 'checked' : ''}> 매뉴얼 반영됨</label>
+          ${n.uid === me.uid ? `<button class="ghost sm" data-del="${n.id}">삭제</button>` : `<button class="ghost sm danger" data-del="${n.id}">삭제</button>`}</div>`
+        : n.uid === me.uid ? `<div class="row"><button class="ghost sm" data-del="${n.id}">삭제</button></div>` : ''}
+      </section>`).join('') || '<section class="card muted">아직 작성된 성찰노트가 없어요.</section>'}`);
+  $app.querySelectorAll('[data-w]').forEach((b) => b.onclick = () => go('manual', { tab: 'notes', who: b.dataset.w }));
+  $app.querySelectorAll('[data-pg]').forEach((a) => a.onclick = (e) => { e.preventDefault(); go('manual', { id: a.dataset.pg }); });
+  document.getElementById('nsave').onclick = async () => {
+    const mistake = document.getElementById('nm').value.trim(), plan = document.getElementById('npl').value.trim();
+    if (!mistake) { alert('실수·지적 내용을 적어 주세요.'); return; }
+    const pid = document.getElementById('np').value;
+    await addDoc(collection(db, 'notes'), { uid: me.uid, name: me.name, pageId: pid, pageTitle: pid ? mcache.pages[pid]?.title || '' : '', mistake, plan, date: today(), at: serverTimestamp(), reflected: false });
+    toast('저장했어요'); go('manual', { tab: 'notes' });
+  };
+  $app.querySelectorAll('[data-fb]').forEach((b) => b.onclick = async () => {
+    const t = b.closest('.note').querySelector('.fb').value.trim();
+    await updateDoc(doc(db, 'notes', b.dataset.fb), { feedback: t, feedbackBy: me.name, feedbackAt: serverTimestamp() });
+    toast('피드백을 저장했어요');
+  });
+  $app.querySelectorAll('[data-rf]').forEach((c) => c.onchange = () => updateDoc(doc(db, 'notes', c.dataset.rf), { reflected: c.checked }));
+  $app.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
+    if (!confirm('이 성찰노트를 삭제할까요?')) return;
+    await deleteDoc(doc(db, 'notes', b.dataset.del)); toast('삭제했어요'); renderNotes();
+  });
+}
+
+// ---------- 개선 요청 ----------
+async function renderReqs() {
+  const s = await getDocs(query(collection(db, 'manualReqs'), orderBy('at', 'desc')));
+  const all = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const boss = canApprove();
+  const stCls = { '접수': '', '검토 중': 'st-ing', '반영': 'st-ok', '보류': 'st-hold' };
+  shell(`
+    <div class="crumb">원내매뉴얼</div>
+    <h1>💬 개선 요청</h1>
+    <p class="muted">매뉴얼 형식, 빠진 내용, 틀린 내용 등 무엇이든 남겨 주세요.</p>
+    <section class="card form">
+      <label>관련 매뉴얼 (선택)<select id="rp"><option value="">(선택 안 함)</option>${mPages().sort(mSort).map((p) => `<option value="${p.id}" ${p.id === sub?.write ? 'selected' : ''}>${esc(p.group)} · ${esc(p.title)}</option>`).join('')}</select></label>
+      <label>요청 내용<textarea id="rt" rows="3" placeholder="예: 근관치료 페이지에 파일 순서 사진이 있으면 좋겠어요"></textarea></label>
+      <button class="primary" id="rsave">요청 남기기</button>
+    </section>
+    ${all.map((r) => `
+      <section class="card note" data-id="${r.id}">
+        <div class="row between"><div><b>${esc(r.name)}</b> <span class="stTag ${stCls[r.status || '접수']}">${esc(r.status || '접수')}</span></div><span class="muted sm">${esc(r.date || dstr(r.at))}</span></div>
+        ${r.pageId && mcache.pages[r.pageId] ? `<a href="#" class="sm" data-pg="${r.pageId}">📘 ${esc(mcache.pages[r.pageId].title)}</a>` : ''}
+        <div class="ntext">${esc(r.text)}</div>
+        ${r.reply && !boss ? `<div class="box tip"><p><b>답변</b> <span class="muted sm">${esc(r.replyBy || '')}</span></p><div class="ntext">${esc(r.reply)}</div></div>` : ''}
+        ${boss ? `<textarea class="fb" rows="2" placeholder="답변 남기기">${esc(r.reply || '')}</textarea>
+          <div class="row"><select class="rst">${REQ_ST.map((x) => `<option ${x === (r.status || '접수') ? 'selected' : ''}>${x}</option>`).join('')}</select><button class="primary sm" data-rp="${r.id}">저장</button><button class="ghost sm danger" data-del="${r.id}">삭제</button></div>`
+        : r.uid === me.uid ? `<div class="row"><button class="ghost sm" data-del="${r.id}">삭제</button></div>` : ''}
+      </section>`).join('') || '<section class="card muted">아직 요청이 없어요.</section>'}`);
+  $app.querySelectorAll('[data-pg]').forEach((a) => a.onclick = (e) => { e.preventDefault(); go('manual', { id: a.dataset.pg }); });
+  document.getElementById('rsave').onclick = async () => {
+    const text = document.getElementById('rt').value.trim(); if (!text) { alert('요청 내용을 적어 주세요.'); return; }
+    const pid = document.getElementById('rp').value;
+    await addDoc(collection(db, 'manualReqs'), { uid: me.uid, name: me.name, pageId: pid, pageTitle: pid ? mcache.pages[pid]?.title || '' : '', text, status: '접수', date: today(), at: serverTimestamp() });
+    toast('요청을 남겼어요'); go('manual', { tab: 'req' });
+  };
+  $app.querySelectorAll('[data-rp]').forEach((b) => b.onclick = async () => {
+    const c = b.closest('.note');
+    await updateDoc(doc(db, 'manualReqs', b.dataset.rp), { reply: c.querySelector('.fb').value.trim(), replyBy: me.name, status: c.querySelector('.rst').value });
+    toast('저장했어요'); renderReqs();
+  });
+  $app.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
+    if (!confirm('이 요청을 삭제할까요?')) return;
+    await deleteDoc(doc(db, 'manualReqs', b.dataset.del)); toast('삭제했어요'); renderReqs();
+  });
+}
+
+// ---------- 목차·가져오기 (관리자) ----------
+async function renderMAdmin() {
+  const g = mcache.tree.groups.map((x) => ({ ...x }));
+  const pages = mPages().map((p) => ({ id: p.id, title: p.title, group: p.group, sub: p.sub || '', order: p.order ?? 9999 })).sort(mSort);
+  const draw = () => {
+    shell(`
+      <div class="crumb">원내매뉴얼 / 관리자</div>
+      <h1>🗂️ 목차·가져오기</h1>
+      <section class="card"><h3>📥 매뉴얼 파일 가져오기</h3>
+        <p class="muted sm">Claude가 만들어 준 매뉴얼 파일(.json)을 올리면 목차와 페이지가 한 번에 들어가요. 같은 페이지가 있으면 새 내용으로 바뀌어요.</p>
+        <div class="row"><label class="upload">📥 파일 고르기<input type="file" id="mimp" accept=".json" hidden></label><button class="ghost" id="mexp">📤 전체 백업 내려받기</button></div>
+        <p id="mprog" class="muted sm"></p></section>
+      <section class="card"><div class="row between"><h3>큰 제목(그룹) 순서</h3><button class="sm" id="gadd">+ 그룹 추가</button></div>
+        ${g.map((x, i) => `<div class="trow"><input data-gn="${i}" value="${esc(x.name)}"><button class="sm ghost" data-gu="${i}">↑</button><button class="sm ghost" data-gd="${i}">↓</button>${pages.some((p) => p.group === x.name) ? '' : `<button class="sm ghost danger" data-gx="${i}">삭제</button>`}</div>`).join('')}
+      </section>
+      <section class="card"><h3>페이지 위치</h3><p class="muted sm">그룹과 작은 제목을 바꾸거나 ↑↓로 순서를 바꾼 뒤 아래 <b>저장</b>을 눌러요.</p>
+        ${g.map((x) => `<h4 class="tgrp">${esc(x.name)}</h4>` + pages.filter((p) => p.group === x.name).map((p) => `
+          <div class="trow" data-p="${p.id}"><span class="ttl">${esc(p.title)}</span>
+            <input data-ps="${p.id}" value="${esc(p.sub)}" placeholder="작은 제목">
+            <select data-pg2="${p.id}">${g.map((y) => `<option ${y.name === p.group ? 'selected' : ''}>${esc(y.name)}</option>`).join('')}</select>
+            <button class="sm ghost" data-pu="${p.id}">↑</button><button class="sm ghost" data-pd="${p.id}">↓</button></div>`).join('')).join('')}
+      </section>
+      <div class="row"><button class="primary" id="tsave">저장</button></div>`);
+    const renameMap = {};
+    $app.querySelectorAll('[data-gn]').forEach((inp) => inp.onchange = () => { const i = +inp.dataset.gn; const old = g[i].name; g[i].name = inp.value.trim() || old; pages.forEach((p) => { if (p.group === old) p.group = g[i].name; }); renameMap[old] = g[i].name; draw(); });
+    const mv = (arr, i, d) => { const j = i + d; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; };
+    $app.querySelectorAll('[data-gu]').forEach((b) => b.onclick = () => { mv(g, +b.dataset.gu, -1); draw(); });
+    $app.querySelectorAll('[data-gd]').forEach((b) => b.onclick = () => { mv(g, +b.dataset.gd, 1); draw(); });
+    $app.querySelectorAll('[data-gx]').forEach((b) => b.onclick = () => { g.splice(+b.dataset.gx, 1); draw(); });
+    document.getElementById('gadd').onclick = () => { const n = prompt('새 그룹 이름'); if (n) { g.push({ name: n }); draw(); } };
+    $app.querySelectorAll('[data-ps]').forEach((inp) => inp.onchange = () => { pages.find((p) => p.id === inp.dataset.ps).sub = inp.value.trim(); });
+    $app.querySelectorAll('[data-pg2]').forEach((s) => s.onchange = () => { const p = pages.find((x) => x.id === s.dataset.pg2); p.group = s.value; p.order = 99999; draw(); });
+    const pmv = (id, d) => {
+      const p = pages.find((x) => x.id === id); const same = pages.filter((x) => x.group === p.group);
+      const i = same.indexOf(p), j = i + d; if (j < 0 || j >= same.length) return;
+      const o = p.order; p.order = same[j].order; same[j].order = o; if (p.order === same[j].order) p.order += d;
+      pages.sort((a, b) => a.order - b.order); draw();
+    };
+    $app.querySelectorAll('[data-pu]').forEach((b) => b.onclick = () => pmv(b.dataset.pu, -1));
+    $app.querySelectorAll('[data-pd]').forEach((b) => b.onclick = () => pmv(b.dataset.pd, 1));
+    document.getElementById('tsave').onclick = async () => {
+      const btn = document.getElementById('tsave'); btn.disabled = true;
+      await setDoc(doc(db, 'manualMeta', 'tree'), { groups: g.map((x) => ({ name: x.name })) });
+      let k = 0;
+      for (const x of g) for (const p of pages.filter((y) => y.group === x.name)) {
+        const old = mcache.pages[p.id]; k++;
+        if (old.group !== p.group || (old.sub || '') !== p.sub || old.order !== k) await setDoc(doc(db, 'manuals', p.id), { group: p.group, sub: p.sub, order: k }, { merge: true });
+      }
+      toast('저장했어요'); await loadManual(true); go('manual', { tab: 'admin' });
+    };
+    document.getElementById('mexp').onclick = async () => {
+      const imgs = {}; for (const d of (await getDocs(collection(db, 'manualImages'))).docs) imgs[d.id] = d.data().data;
+      const out = { type: 'plaire-manual-init', version: 1, createdAt: today(), tree: mcache.tree, pages: mPages().map(({ _text, updatedAt, ...p }) => p),
+        special: Object.fromEntries(['_home', '_check'].filter((id) => mcache.pages[id]).map((id) => [id, { title: mcache.pages[id].title, body: mcache.pages[id].body }])), images: imgs };
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+      a.download = `매뉴얼_백업_${today()}.json`; a.click();
+    };
+    document.getElementById('mimp').onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      let d; try { d = JSON.parse(await f.text()); } catch (er) { alert('파일을 읽지 못했어요.'); return; }
+      if (d.type !== 'plaire-manual-init') { alert('매뉴얼 파일이 아니에요.'); return; }
+      if (!confirm(`페이지 ${d.pages.length}개, 사진 ${Object.keys(d.images || {}).length}장을 가져올까요?\n같은 페이지가 있으면 새 내용으로 바뀌어요.`)) return;
+      const pr = document.getElementById('mprog'); let i = 0; const total = d.pages.length + Object.keys(d.images || {}).length + 2;
+      const step = (t) => { i++; pr.textContent = `가져오는 중… ${i}/${total} ${t}`; };
+      try {
+        for (const [id, data] of Object.entries(d.images || {})) { await setDoc(doc(db, 'manualImages', id), { data, at: serverTimestamp() }); step('사진'); }
+        for (const p of d.pages) { const { id, ...rest } = p; await setDoc(doc(db, 'manuals', id), { ...rest, updatedAt: serverTimestamp(), updatedBy: me.name }); step(p.title); }
+        for (const [id, p] of Object.entries(d.special || {})) await setDoc(doc(db, 'manuals', id), { ...p, updatedAt: serverTimestamp(), updatedBy: me.name });
+        step('특별 페이지');
+        const names = (d.tree?.groups || []).map((x) => x.name);
+        const merged = [...names.map((n) => ({ name: n })), ...mcache.tree.groups.filter((x) => !names.includes(x.name))];
+        await setDoc(doc(db, 'manualMeta', 'tree'), { groups: merged }); step('목차');
+        for (const l of d.log || []) await addMLog({ pageId: '', ...l });
+        toast('가져왔어요'); await loadManual(true); go('manual');
+      } catch (er) { console.error(er); alert('가져오는 중 문제가 생겼어요: ' + (er.code || er.message)); }
+    };
+  };
+  draw();
 }
 
 // ---------- 연차·근무표 ----------
