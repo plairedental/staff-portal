@@ -163,3 +163,57 @@ dl.info dt { color: var(--muted); } dl.info dd { margin: 0; }
 .row input[type=checkbox] { flex: none; min-width: 0; width: auto; margin: 0; }
 main.wide { max-width: none; }
 .stamps button.on { outline: 3px solid var(--text); outline-offset: 1px; font-weight: 700; }
+
+/* 연차 대시보드 */
+.eyebrow { font-size: .72rem; font-weight: 800; letter-spacing: .12em; color: var(--c); margin: .4rem 0 -.5rem; }
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: .8rem; margin: 1rem 0; }
+.kpi { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem; }
+.kpi span { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .5rem; }
+.kpi b { font-size: 1.6rem; }
+.kpi small { display: block; color: var(--muted); font-size: .75rem; margin-top: .3rem; }
+.kpi .accent, .accent { color: var(--c); }
+.neg { color: var(--red); }
+.right { text-align: right; }
+.bigNum { font-size: 1.8rem; font-weight: 800; color: var(--c); }
+.kinds { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 1rem; }
+.kinds > div { padding: 1rem; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: .3rem; font-size: .9rem; }
+.kinds > div:first-child { border-left: none; }
+.kinds b { font-size: 1.4rem; } .kinds small { color: var(--muted); }
+.ki { display: inline-flex; width: 1.8rem; height: 1.8rem; align-items: center; justify-content: center; border-radius: 8px; margin-bottom: .2rem; }
+.k1 { background: var(--c2); } .k2 { background: #eceef0; } .k3 { background: #fbeedd; }
+.bar { display: flex; height: 10px; border-radius: 99px; overflow: hidden; background: #eef0f0; margin-top: 1rem; gap: 2px; }
+.bar i { display: block; height: 100%; }
+.bar .b1 { background: var(--c); } .bar .b2 { background: #2d3436; } .bar .b3 { background: #c0712b; }
+.mini { width: 70px; height: 6px; background: #eef0f0; border-radius: 99px; overflow: hidden; }
+.mini i { display: block; height: 100%; background: var(--c); }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--c2); }
+.k-시간차 { background: #fbeedd !important; color: #8a5a2b !important; font-size: .7rem; }
+
+/* 급여 관리 */
+.monthLbl { font-size: 1.1rem; min-width: 7rem; text-align: center; }
+.pay { overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: 14px; margin: .8rem 0 1rem; }
+.pay table { border-collapse: separate; border-spacing: 0; font-size: .85rem; white-space: nowrap; }
+.pay th { background: #f7f9f9; color: var(--muted); font-weight: 600; padding: .55rem .5rem; border-bottom: 1px solid var(--line); text-align: center; }
+.pay th small { font-weight: 400; }
+.pay td { padding: .2rem .3rem; border-bottom: 1px solid var(--line); text-align: right; }
+.pay td:nth-child(-n+4) { text-align: center; }
+.pay .nm { position: sticky; left: 0; background: #fff; z-index: 1; }
+.pay thead .nm { background: #f7f9f9; }
+.pay .pin { width: 6.2rem; border: 1px solid transparent; background: transparent; text-align: right; padding: .35rem .4rem; border-radius: 6px; }
+.pay .pin:hover { border-color: var(--line); }
+.pay .pin:focus { border-color: var(--c); background: #fff; outline: none; }
+.pay .pin.memo { width: 8rem; text-align: left; }
+.pay .st { width: auto; padding: .25rem .3rem; font-size: .8rem; }
+.pay .hl { background: #fff8e6; font-weight: 700; }
+.pay .ga { color: #2b6cb0; } .pay td.ga { background: #f2f7fd; font-weight: 700; }
+.pay .gb { color: #c0392b; } .pay td.gb { background: #fdf4f3; }
+.pay .gc { color: #2b6cb0; } .pay td.gc { background: #f4f8fc; }
+.pay .gd { color: #2f855a; } .pay td.gd { background: #f3faf5; }
+.pay tfoot td { background: #f3f5f5; font-weight: 800; padding: .7rem .5rem; border-bottom: none; }
+.pay tfoot td:first-child { text-align: center; }
+.kpi.big b { font-size: 1.9rem; }
+@media (max-width: 760px) {
+  .kpis { grid-template-columns: 1fr 1fr; }
+  .kpi b { font-size: 1.25rem; }
+  .kinds > div { padding: .7rem .5rem; } .kinds b { font-size: 1.1rem; }
+}

@@ -170,7 +170,9 @@ function categories() {
       ['my', '내 정보', '👤', '내 기본정보, 급여, 글씨 크기를 확인해요.'],
       ['hr', '직원 명부', '📇', '직원 정보와 가입 승인을 관리해요.', can.hr],
       ['work:schedule', '근무표', '🗓️', '월별 근무·휴무 일정을 확인해요.'],
-      ['work:leave', '연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.']
+      ['work:leave', '내 연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.'],
+      ['work:all', '직원 연차 현황', '📋', '직원 전체의 연차 사용 내역을 확인해요.', canApprove],
+      ['payroll', '급여 관리', '💰', '월별 급여와 총 인건비를 한눈에 봐요.', () => me.role === 'admin']
     ] },
     { key: 'manual', label: '원내매뉴얼', icon: '📘', items: [
       ['manual', '매뉴얼 목록', '📘', '원내 업무 매뉴얼을 찾아봐요.'],
@@ -184,6 +186,7 @@ const catOf = (key) => categories().find((c) => c.items.some((i) => i[0] === key
 function goKey(key) {
   if (key === 'work:schedule') return go('work', { tab: 'schedule' });
   if (key === 'work:leave') return go('work', { tab: 'leave' });
+  if (key === 'work:all') return go('work', { tab: 'all' });
   if (key === 'manual:new') return go('manual', { edit: null });
   go(key);
 }
@@ -207,10 +210,10 @@ function shell(content) {
         <div class="sideTitle">${cat.icon} ${cat.label}</div>
         ${cat.items.map(([k, t, i]) => `<button data-k="${k}" class="${key === k ? 'on' : ''}"><i>${i}</i>${t}</button>`).join('')}
       </aside>` : ''}
-      <main class="${key === 'work:schedule' ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => goKey(cats.find((c) => c.key === b.dataset.cat).items[0][0]));
-  $app.querySelectorAll('[data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
+  $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
   document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
   document.getElementById('me').onclick = (e) => { e.preventDefault(); go('my'); };
   document.getElementById('set')?.addEventListener('click', () => go('settings'));
@@ -245,6 +248,7 @@ async function render() {
     if (view === 'work') return await renderWork();
     if (view === 'settings' && me.role === 'admin') return renderSettings();
     if (view === 'perf' && me.role === 'admin') return renderPerf();
+    if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
     if (view === 'my') return await renderMy();
     view = 'home'; return renderHome();
   } catch (e) {
@@ -405,6 +409,13 @@ async function linkRoster(r, p) {
     if (x.cells?.[r.uid]) { x.cells[p.uid] = { ...(x.cells[p.uid] || {}), ...x.cells[r.uid] }; delete x.cells[r.uid]; }
     await setDoc(d.ref, x);
   }
+  const pay = await getDocs(collection(db, 'payroll'));
+  for (const d of pay.docs) {
+    const x = d.data();
+    if (!x.rows?.[r.uid]) continue;
+    x.rows[p.uid] = x.rows[r.uid]; delete x.rows[r.uid];
+    await setDoc(d.ref, x);
+  }
   await deleteDoc(doc(db, 'users', r.uid));
 }
 
@@ -544,160 +555,384 @@ async function renderManualEdit(id) {
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseD = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
-const LEAVE_TYPES = { '연차': 1, '오전반차': 0.5, '오후반차': 0.5 };
-const STAMPS = [['', '근무'], ['휴무', '휴무'], ['오전', '오전'], ['오후', '오후'], ['야간', '야간'], ['연차', '연차'], ['반차', '반차']];
+const H = 8;   // 연차 1일 = 8시간
+const LEAVE_TYPES = { '연차': '종일', '오전반차': '반차', '오후반차': '반차', '시간차': '시간차' };
+const STAMPS = [['', '근무'], ['휴무', '휴무'], ['오전', '오전'], ['오후', '오후'], ['야간', '야간'], ['연차', '연차'], ['반차', '반차'], ['시간차', '시간차']];
 const canApprove = () => ['admin', 'chief'].includes(me?.role);
+const hoursOf = (l) => l.hours ?? Number(l.days || 0) * H;
+function fmtH(h) {
+  const neg = h < 0; h = Math.abs(Math.round(h * 10) / 10);
+  const d = Math.floor(h / H + 1e-9), r = Math.round((h - d * H) * 10) / 10;
+  const s = d && r ? `${d}일 ${r}시간` : d ? `${d}일` : r ? `${r}시간` : '0일';
+  return (neg ? '-' : '') + s;
+}
 
 // 근로기준법 기준 연차 (입사일 기준, 출근율 80% 이상 가정)
+// - 입사 1년 미만: 1개월 개근마다 1일 (최대 11일)
+// - 1년 이상: 15일, 3년차부터 2년마다 1일 가산 (최대 25일)
 function leavePeriod(hireDate, today = new Date()) {
   if (!hireDate) return null;
   const h = parseD(hireDate);
   let years = today.getFullYear() - h.getFullYear();
   const anniv = new Date(today.getFullYear(), h.getMonth(), h.getDate());
   if (today < anniv) years--;
+  if (years < 0) return { start: hireDate, end: hireDate, days: 0, label: '입사 전', next: null };
   if (years < 1) {
     let months = (today.getFullYear() - h.getFullYear()) * 12 + today.getMonth() - h.getMonth();
     if (today.getDate() < h.getDate()) months--;
+    months = Math.max(0, Math.min(11, months));
     const end = new Date(h); end.setFullYear(end.getFullYear() + 1);
-    return { start: hireDate, end: ymd(end), days: Math.max(0, Math.min(11, months)), label: '입사 1년 미만 (1개월 개근마다 1일)' };
+    const next = new Date(h); next.setMonth(h.getMonth() + months + 1);
+    return { start: hireDate, end: ymd(end), days: months, label: `입사 1년 미만 · 근속 ${months}개월`,
+      next: months < 11 ? `다음 연차 발생일 ${ymd(next)} (+1일)` : `1년이 되는 ${ymd(end)}에 15일 발생` };
   }
   const start = new Date(h); start.setFullYear(h.getFullYear() + years);
   const end = new Date(start); end.setFullYear(end.getFullYear() + 1);
-  return { start: ymd(start), end: ymd(end), days: Math.min(25, 15 + Math.floor((years - 1) / 2)), label: `근속 ${years}년차` };
+  const days = Math.min(25, 15 + Math.floor((years - 1) / 2));
+  const nextDays = Math.min(25, 15 + Math.floor(years / 2));
+  return { start: ymd(start), end: ymd(end), days, label: `근속 ${years}년 (${years + 1}년차)`,
+    next: `${ymd(end)}에 ${nextDays}일 새로 발생` };
 }
 function balanceOf(user, leaves) {
   const p = leavePeriod(user.hireDate);
   const adj = Number(user.annualAdjust || 0);
-  if (!p) return { total: adj, used: 0, left: adj, period: null };
-  const used = leaves.filter((l) => l.uid === user.uid && l.status === '승인' && l.start >= p.start && l.start < p.end)
-    .reduce((s, l) => s + Number(l.days || 0), 0);
-  return { total: p.days + adj, used, left: p.days + adj - used, period: p };
+  const mine = leaves.filter((l) => l.uid === user.uid);
+  const inPeriod = mine.filter((l) => l.status === '승인' && (!p || (l.start >= p.start && l.start < p.end)));
+  const kinds = { '종일': { h: 0, n: 0 }, '반차': { h: 0, n: 0 }, '시간차': { h: 0, n: 0 } };
+  inPeriod.forEach((l) => { const k = kinds[LEAVE_TYPES[l.type] || '종일']; k.h += hoursOf(l); k.n++; });
+  const used = inPeriod.reduce((s, l) => s + hoursOf(l), 0);
+  const total = ((p?.days || 0) + adj) * H;
+  return { total, used, left: total - used, period: p, kinds, pending: mine.filter((l) => l.status === '대기').length };
 }
-function countDays(start, end, type) {
-  if (LEAVE_TYPES[type] === 0.5) return 0.5;
+function countHours(start, end, type, hrs) {
+  const k = LEAVE_TYPES[type];
+  if (k === '반차') return 4;
+  if (k === '시간차') return Number(hrs || 1);
   let n = 0;
   for (let d = parseD(start); d <= parseD(end); d.setDate(d.getDate() + 1)) if (d.getDay() !== 0) n++;
-  return n;
+  return n * H;
 }
 async function loadLeaves() {
   const col = collection(db, 'leaves');
-  let q;
-  if (canApprove()) q = col;
-  else if (me.role === 'leader') q = query(col, where('team', '==', me.team || ''));
-  else q = query(col, where('uid', '==', me.uid));
+  const q = canApprove() ? col : query(col, where('uid', '==', me.uid));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.start.localeCompare(a.start));
 }
 // 승인된 연차를 근무표에 반영 (code가 null이면 지움)
 async function stampLeave(l, code) {
   const byMonth = {};
-  const days = LEAVE_TYPES[l.type] === 0.5 ? [l.start] : [];
+  const days = LEAVE_TYPES[l.type] === '종일' ? [] : [l.start];
   if (!days.length) for (let d = parseD(l.start); d <= parseD(l.end); d.setDate(d.getDate() + 1)) if (d.getDay() !== 0) days.push(ymd(d));
   days.forEach((s) => { (byMonth[s.slice(0, 7)] ||= []).push(Number(s.slice(8))); });
   for (const [month, ds] of Object.entries(byMonth)) {
     const ref = doc(db, 'schedules', month);
     const snap = await getDoc(ref);
     const data = snap.exists() ? snap.data() : { people: [], cells: {} };
-    data.cells ||= {}; data.cells[l.uid] ||= {};
+    data.cells ||= {}; data.cells[l.uid] ||= {}; data.people ||= [];
     ds.forEach((d) => { if (code) data.cells[l.uid][d] = code; else delete data.cells[l.uid][d]; });
     if (!data.people.some((p) => p.uid === l.uid)) data.people.push({ uid: l.uid, name: l.name, team: l.team || '' });
     await setDoc(ref, data);
   }
 }
+const stampCode = (l) => ({ '종일': '연차', '반차': '반차', '시간차': '시간차' })[LEAVE_TYPES[l.type] || '종일'];
 
 async function renderWork() {
   const tab = sub?.tab || 'schedule';
-  const head = `<h1>${tab === 'leave' ? '연차' : '근무표'}</h1>`;
-  const bindTabs = () => $app.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => go('work', { tab: b.dataset.t }));
-  if (tab === 'leave') return renderLeave(head, bindTabs);
-  return renderSchedule(head, bindTabs);
+  if (tab === 'leave') return renderMyLeave();
+  if (tab === 'all' && canApprove()) return renderLeaveAll();
+  return renderSchedule('<h1>근무표</h1>', () => {});
 }
 
-async function renderLeave(head, bindTabs) {
-  const leaves = await loadLeaves();
-  const mine = leaves.filter((l) => l.uid === me.uid);
-  const bal = balanceOf(me, mine);
-  const pending = leaves.filter((l) => l.status === '대기' && l.uid !== me.uid);
-  const today = ymd(new Date());
-  let people = [];
-  if (canApprove()) people = (await loadPeople()).filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
-
-  const row = (l, actions = '') => `
-    <div class="lv">
-      <div><b>${esc(l.name)}</b> <span class="muted sm">${esc(l.type)} · ${l.start}${l.end && l.end !== l.start ? ' ~ ' + l.end : ''} (${l.days}일)</span>
-        ${l.reason ? `<div class="sm muted">${esc(l.reason)}</div>` : ''}</div>
-      <div class="row"><span class="tag ${l.status === '승인' ? '' : 'gray'}">${l.status}</span>${actions}</div>
-    </div>`;
-
-  shell(`${head}
+// 연차 대시보드 (한 사람)
+function leaveDash(user, leaves) {
+  const b = balanceOf(user, leaves);
+  const k = b.kinds;
+  const sum = b.used || 1;
+  const pct = (h) => (h / sum * 100).toFixed(1) + '%';
+  return `
+    ${b.period ? `<p class="muted sm">${b.period.label} · 연차 기간 ${b.period.start} ~ ${b.period.end}${b.period.next ? ' · ' + b.period.next : ''}</p>`
+      : '<p class="msg">입사일이 등록되지 않아 연차를 계산할 수 없어요. 인사관리 → 직원 명부에서 입사일을 넣어 주세요.</p>'}
+    <div class="kpis">
+      <div class="kpi"><span>부여</span><b>${fmtH(b.total)}</b>${Number(user.annualAdjust || 0) ? `<small>조정 ${user.annualAdjust > 0 ? '+' : ''}${user.annualAdjust}일 포함</small>` : ''}</div>
+      <div class="kpi"><span>사용</span><b>${fmtH(b.used)}</b></div>
+      <div class="kpi"><span>잔여</span><b class="${b.left < 0 ? 'neg' : 'accent'}">${fmtH(b.left)}</b></div>
+      <div class="kpi"><span>대기 중 신청</span><b>${b.pending}건</b></div>
+    </div>
     <section class="card">
-      <h2>내 연차</h2>
-      ${bal.period ? `<div class="stats"><div><b>${bal.total}</b><span>발생</span></div><div><b>${bal.used}</b><span>사용</span></div><div><b>${bal.left}</b><span>남음</span></div></div>
-        <p class="muted sm">${bal.period.label} · 기간 ${bal.period.start} ~ ${bal.period.end}</p>`
-        : '<p class="muted">입사일이 등록되지 않아 연차를 계산할 수 없어요. 관리자에게 입사일 등록을 요청해 주세요.</p>'}
-    </section>
-    <section class="card form">
-      <h2>연차 신청</h2>
-      <label>종류<select id="lt">${Object.keys(LEAVE_TYPES).map((t) => `<option>${t}</option>`).join('')}</select></label>
-      <div class="two"><label>시작일<input type="date" id="ls" value="${today}"></label><label id="leWrap">종료일<input type="date" id="le" value="${today}"></label></div>
-      <label>사유 (선택)<input id="lr" placeholder="예: 개인 사정"></label>
-      <p class="sm" id="lcount"></p>
-      <button id="lsend" class="primary">신청하기</button>
-    </section>
-    ${canApprove() && pending.length ? `<section class="card warn"><h2>승인 대기 (${pending.length})</h2>
-      ${pending.map((l) => row(l, `<button data-ok="${l.id}" class="primary sm">승인</button><button data-no="${l.id}" class="ghost sm">반려</button>`)).join('')}</section>` : ''}
-    ${me.role === 'leader' && pending.length ? `<section class="card"><h2>우리 팀 신청 (${pending.length})</h2>${pending.map((l) => row(l)).join('')}
-      <p class="muted sm">승인은 관리자·총괄실장이 해요.</p></section>` : ''}
-    ${canApprove() ? `<section class="card"><h2>직원별 연차</h2>
-      <div class="tbl"><table><tr><th>이름</th><th>발생</th><th>사용</th><th>남음</th></tr>
-      ${people.map((p) => { const b = balanceOf(p, leaves); return `<tr><td>${esc(p.name)}</td><td>${b.period ? b.total : '입사일 없음'}</td><td>${b.used}</td><td><b>${b.left}</b></td></tr>`; }).join('')}
-      </table></div><p class="muted sm">입사일 기준, 출근율 80% 이상을 가정한 계산이에요. 조정은 인사관리 → 직원 → "연차 조정"에서 해요.</p></section>` : ''}
-    <section class="card"><h2>${canApprove() ? '전체 신청 내역' : me.role === 'leader' ? '우리 팀 신청 내역' : '내 신청 내역'}</h2>
-      ${leaves.filter((l) => l.status !== '대기' || l.uid === me.uid || !canApprove()).slice(0, 50).map((l) => row(l,
-        (l.uid === me.uid && l.status === '대기') ? `<button data-cancel="${l.id}" class="ghost sm">취소</button>`
-        : (canApprove() && l.status === '승인') ? `<button data-undo="${l.id}" class="ghost sm danger">승인 취소</button>` : '')).join('') || '<p class="muted">내역이 없어요.</p>'}
-    </section>`);
-  bindTabs();
-
-  const upd = () => {
-    const t = document.getElementById('lt').value;
-    const half = LEAVE_TYPES[t] === 0.5;
-    document.getElementById('leWrap').style.display = half ? 'none' : '';
-    const s = val('ls'), e = half ? s : val('le');
-    document.getElementById('lcount').textContent = s && e && e >= s ? `사용 일수: ${countDays(s, e, t)}일 (일요일 제외)` : '종료일을 확인해 주세요.';
-  };
-  ['lt', 'ls', 'le'].forEach((id) => document.getElementById(id).oninput = upd); upd();
-  document.getElementById('lsend').onclick = async () => {
-    const type = val('lt'), start = val('ls'), end = LEAVE_TYPES[type] === 0.5 ? start : val('le');
-    if (!start || end < start) return toast('날짜를 확인해 주세요');
-    await addDoc(collection(db, 'leaves'), {
-      uid: me.uid, name: me.name, team: me.team || '', type, start, end, days: countDays(start, end, type),
-      reason: val('lr'), status: '대기', createdAt: serverTimestamp()
-    });
-    toast('신청했어요'); go('work', { tab: 'leave' });
-  };
+      <div class="row between"><div><h2>사용 형태별 합계</h2><p class="muted sm">승인된 신청을 연차 차감량으로 환산했어요. (1일 = ${H}시간)</p></div>
+        <div class="right"><small class="muted">총합</small><div class="bigNum">${fmtH(b.used)}</div></div></div>
+      <div class="kinds">
+        <div><span class="ki k1">📅</span> 종일<b>${fmtH(k['종일'].h)}</b><small>${k['종일'].n}회</small></div>
+        <div><span class="ki k2">☀️</span> 반차<b>${fmtH(k['반차'].h)}</b><small>${k['반차'].n}회</small></div>
+        <div><span class="ki k3">⏰</span> 시간차<b>${fmtH(k['시간차'].h)}</b><small>${k['시간차'].n}회</small></div>
+      </div>
+      <div class="bar">${b.used ? `<i class="b1" style="width:${pct(k['종일'].h)}"></i><i class="b2" style="width:${pct(k['반차'].h)}"></i><i class="b3" style="width:${pct(k['시간차'].h)}"></i>` : ''}</div>
+    </section>`;
+}
+function leaveRow(l, actions = '') {
+  const when = l.start + (l.end && l.end !== l.start ? ' ~ ' + l.end : '');
+  return `<div class="lv">
+    <div><b>${esc(l.name)}</b> <span class="muted sm">${esc(l.type)} · ${when} · ${fmtH(hoursOf(l))}</span>
+      ${l.reason ? `<div class="sm muted">${esc(l.reason)}</div>` : ''}</div>
+    <div class="row"><span class="tag ${l.status === '승인' ? '' : 'gray'}">${l.status}</span>${actions}</div></div>`;
+}
+function bindLeaveActions(leaves, back) {
   const find = (id) => leaves.find((l) => l.id === id);
   $app.querySelectorAll('[data-ok]').forEach((b) => b.onclick = async () => {
-    const l = find(b.dataset.ok);
+    const l = find(b.dataset.ok); b.disabled = true;
     await updateDoc(doc(db, 'leaves', l.id), { status: '승인', decidedBy: me.name });
-    await stampLeave(l, LEAVE_TYPES[l.type] === 0.5 ? '반차' : '연차');
-    toast('승인하고 근무표에 반영했어요'); go('work', { tab: 'leave' });
+    await stampLeave(l, stampCode(l));
+    toast('승인하고 근무표에 반영했어요'); back();
   });
   $app.querySelectorAll('[data-no]').forEach((b) => b.onclick = async () => {
     await updateDoc(doc(db, 'leaves', b.dataset.no), { status: '반려', decidedBy: me.name });
-    toast('반려했어요'); go('work', { tab: 'leave' });
+    toast('반려했어요'); back();
   });
   $app.querySelectorAll('[data-undo]').forEach((b) => b.onclick = async () => {
     if (!confirm('승인을 취소할까요? 근무표에서도 지워져요.')) return;
     const l = find(b.dataset.undo);
     await updateDoc(doc(db, 'leaves', l.id), { status: '반려', decidedBy: me.name });
     await stampLeave(l, null);
-    toast('승인을 취소했어요'); go('work', { tab: 'leave' });
+    toast('승인을 취소했어요'); back();
   });
   $app.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = async () => {
     if (!confirm('신청을 취소할까요?')) return;
-    await deleteDoc(doc(db, 'leaves', b.dataset.cancel)); toast('취소했어요'); go('work', { tab: 'leave' });
+    await deleteDoc(doc(db, 'leaves', b.dataset.cancel)); toast('취소했어요'); back();
   });
+}
+const approverActions = (l) => l.status === '대기' ? `<button data-ok="${l.id}" class="primary sm">승인</button><button data-no="${l.id}" class="ghost sm">반려</button>`
+  : l.status === '승인' ? `<button data-undo="${l.id}" class="ghost sm danger">승인 취소</button>` : '';
+
+async function rulesSection() {
+  const d = await getDoc(doc(db, 'settings', 'leaveRules'));
+  const text = d.exists() ? d.data().text || '' : '';
+  return { text, html: `
+    <section class="card" id="rulesCard">
+      <div class="row between"><h2>📖 우리 치과 연차 사용 규칙</h2>${me.role === 'admin' ? '<button id="editRules" class="ghost sm">수정</button>' : ''}</div>
+      <div class="manual" id="rulesBody">${text ? esc(text) : '<span class="muted">아직 등록된 규칙이 없어요.</span>'}</div>
+    </section>` };
+}
+function bindRules(text) {
+  document.getElementById('editRules')?.addEventListener('click', () => {
+    document.getElementById('rulesBody').outerHTML = `<div id="rulesBody"><textarea id="rulesText" rows="12" placeholder="예)\n1. 연차는 사용 2주 전까지 신청합니다.\n2. 같은 팀은 같은 날 2명 이상 연차를 쓸 수 없습니다.\n3. 반차는 오전 9:30~13:30 / 오후 14:30~18:30 기준입니다.">${esc(text)}</textarea>
+      <div class="row"><button id="saveRules" class="primary">저장</button></div></div>`;
+    document.getElementById('editRules').remove();
+    document.getElementById('saveRules').onclick = async () => {
+      await setDoc(doc(db, 'settings', 'leaveRules'), { text: document.getElementById('rulesText').value, updatedAt: serverTimestamp(), updatedBy: me.name });
+      toast('규칙을 저장했어요'); render();
+    };
+  });
+}
+
+async function renderMyLeave() {
+  const leaves = (await loadLeaves()).filter((l) => l.uid === me.uid);
+  const rules = await rulesSection();
+  const today = ymd(new Date());
+  shell(`
+    <div class="row between"><div><p class="eyebrow">MY LEAVE</p><h1>내 연차</h1><p class="muted sm">연차 신청 내역을 확인하고 새로운 신청을 합니다.</p></div>
+      <button id="openReq" class="primary">＋ 연차 신청</button></div>
+    <section class="card form" id="reqCard" style="display:none">
+      <h2>연차 신청</h2>
+      <label>종류<select id="lt">${Object.keys(LEAVE_TYPES).map((t) => `<option>${t}</option>`).join('')}</select></label>
+      <div class="two"><label>날짜<input type="date" id="ls" value="${today}"></label>
+        <label id="leWrap">종료일<input type="date" id="le" value="${today}"></label>
+        <label id="lhWrap" style="display:none">시간<select id="lh">${[1, 2, 3, 4, 5, 6, 7].map((n) => `<option value="${n}">${n}시간</option>`).join('')}</select></label></div>
+      <label>사유 (선택)<input id="lr" placeholder="예: 개인 사정"></label>
+      <p class="sm" id="lcount"></p>
+      <div class="row"><button id="lsend" class="primary">신청하기</button><button id="closeReq" class="ghost">닫기</button></div>
+    </section>
+    ${leaveDash(me, leaves)}
+    <section class="card"><h2>내 신청 내역</h2>
+      ${leaves.map((l) => leaveRow(l, l.status === '대기' ? `<button data-cancel="${l.id}" class="ghost sm">취소</button>` : '')).join('') || '<p class="muted">아직 신청 내역이 없어요.</p>'}
+    </section>
+    ${rules.html}`);
+  const card = document.getElementById('reqCard');
+  document.getElementById('openReq').onclick = () => { card.style.display = ''; card.scrollIntoView({ behavior: 'smooth' }); };
+  document.getElementById('closeReq').onclick = () => { card.style.display = 'none'; };
+  const upd = () => {
+    const t = val('lt'), k = LEAVE_TYPES[t];
+    document.getElementById('leWrap').style.display = k === '종일' ? '' : 'none';
+    document.getElementById('lhWrap').style.display = k === '시간차' ? '' : 'none';
+    const s = val('ls'), e = k === '종일' ? val('le') : s;
+    document.getElementById('lcount').textContent = s && e && e >= s ? `차감: ${fmtH(countHours(s, e, t, val('lh')))}${k === '종일' ? ' (일요일 제외)' : ''}` : '종료일을 확인해 주세요.';
+  };
+  ['lt', 'ls', 'le', 'lh'].forEach((id) => document.getElementById(id).oninput = upd); upd();
+  document.getElementById('lsend').onclick = async () => {
+    const type = val('lt'), k = LEAVE_TYPES[type], start = val('ls'), end = k === '종일' ? val('le') : start;
+    if (!start || end < start) return toast('날짜를 확인해 주세요');
+    const hours = countHours(start, end, type, val('lh'));
+    await addDoc(collection(db, 'leaves'), {
+      uid: me.uid, name: me.name, team: me.team || '', type, start, end, hours, days: hours / H,
+      reason: val('lr'), status: '대기', createdAt: serverTimestamp()
+    });
+    toast('신청했어요'); go('work', { tab: 'leave' });
+  };
+  bindLeaveActions(leaves, () => go('work', { tab: 'leave' }));
+  bindRules(rules.text);
+}
+
+// 관리자·총괄실장: 직원 전체 연차 현황
+async function renderLeaveAll() {
+  const leaves = await loadLeaves();
+  const people = (await loadPeople()).filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
+  const back = () => go('work', { tab: 'all', uid: sub?.uid });
+
+  if (sub?.uid) {
+    const p = people.find((x) => x.uid === sub.uid);
+    if (!p) return go('work', { tab: 'all' });
+    const mine = leaves.filter((l) => l.uid === p.uid);
+    shell(`
+      <button id="back" class="ghost">← 전체 현황</button>
+      <h1>${esc(p.name)} <span class="muted sm">${esc(p.job || '')}${p.team ? ' · ' + esc(p.team) : ''} · 입사 ${p.hireDate || '-'}</span></h1>
+      ${leaveDash(p, leaves)}
+      <section class="card"><h2>사용 내역</h2>${mine.map((l) => leaveRow(l, approverActions(l))).join('') || '<p class="muted">내역이 없어요.</p>'}</section>`);
+    document.getElementById('back').onclick = () => go('work', { tab: 'all' });
+    bindLeaveActions(leaves, back);
+    return;
+  }
+
+  const pending = leaves.filter((l) => l.status === '대기');
+  const rows = people.map((p) => ({ p, b: balanceOf(p, leaves) }));
+  const month = sub?.month || '';
+  const months = [...new Set(leaves.map((l) => l.start.slice(0, 7)))].sort().reverse();
+  const hist = leaves.filter((l) => !month || l.start.startsWith(month));
+  shell(`
+    <p class="eyebrow">LEAVE OVERVIEW</p><h1>직원 연차 현황</h1>
+    <div class="kpis">
+      <div class="kpi"><span>직원 수</span><b>${people.length}명</b></div>
+      <div class="kpi"><span>전체 부여</span><b>${fmtH(rows.reduce((s, r) => s + r.b.total, 0))}</b></div>
+      <div class="kpi"><span>전체 사용</span><b>${fmtH(rows.reduce((s, r) => s + r.b.used, 0))}</b></div>
+      <div class="kpi"><span>승인 대기</span><b class="${pending.length ? 'accent' : ''}">${pending.length}건</b></div>
+    </div>
+    ${pending.length ? `<section class="card warn"><h2>승인 대기 (${pending.length})</h2>${pending.map((l) => leaveRow(l, approverActions(l))).join('')}</section>` : ''}
+    <section class="card">
+      <h2>직원별 연차</h2>
+      <div class="tbl"><table>
+        <tr><th>이름</th><th>팀</th><th>입사일</th><th>근속</th><th>부여</th><th>사용</th><th>잔여</th><th>사용률</th><th>대기</th></tr>
+        ${rows.map(({ p, b }) => `<tr class="click" data-u="${p.uid}">
+          <td><b>${esc(p.name)}</b>${p.status === 'roster' ? ' <span class="tag gray">미가입</span>' : ''}</td><td>${esc(p.team || '-')}</td>
+          <td>${p.hireDate || '<span class="msg">미등록</span>'}</td><td class="sm">${b.period ? b.period.label.replace('입사 1년 미만 · ', '') : '-'}</td>
+          <td>${fmtH(b.total)}</td><td>${fmtH(b.used)}</td><td><b class="${b.left < 0 ? 'neg' : ''}">${fmtH(b.left)}</b></td>
+          <td><div class="mini"><i style="width:${b.total ? Math.min(100, b.used / b.total * 100) : 0}%"></i></div></td><td>${b.pending || ''}</td></tr>`).join('')}
+      </table></div>
+      <p class="muted sm">이름을 누르면 그 직원의 연차 대시보드를 볼 수 있어요.</p>
+    </section>
+    <section class="card">
+      <div class="row between"><h2>전체 사용 내역</h2>
+        <select id="mon" style="width:auto;flex:none"><option value="">전체 기간</option>${months.map((m) => `<option ${m === month ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+      ${hist.slice(0, 200).map((l) => leaveRow(l, approverActions(l))).join('') || '<p class="muted">내역이 없어요.</p>'}
+    </section>`);
+  $app.querySelectorAll('tr[data-u]').forEach((tr) => tr.onclick = () => go('work', { tab: 'all', uid: tr.dataset.u }));
+  document.getElementById('mon').onchange = (e) => go('work', { tab: 'all', month: e.target.value });
+  bindLeaveActions(leaves, () => go('work', { tab: 'all', month }));
+}
+
+// ---------- 급여 관리 (관리자) ----------
+const PAY_A = [['base', '기본급'], ['meal', '식대'], ['position', '직책수당'], ['overtime', '연장수당'], ['night', '야간수당'], ['annual', '연차수당'], ['bonus', '상여금'], ['transport', '교통비'], ['other', '기타수당']];
+const PAY_X = [['deduct', '공제 계', 'b'], ['retire', '퇴직 계', 'c'], ['support', '지원 계', 'd']];
+const ROLE_RANK = { admin: 0, doctor: 1, chief: 2, leader: 3, staff: 4 };
+const num = (v) => Number(String(v ?? '').replace(/[^\d.-]/g, '')) || 0;
+const comma = (n) => Math.round(n).toLocaleString('ko-KR');
+const sumA = (r) => PAY_A.reduce((s, [k]) => s + num(r[k]), 0);
+const totalCost = (r) => sumA(r) + num(r.retire) + num(r.support);
+const netPay = (r) => sumA(r) - num(r.deduct);
+
+async function renderPayroll() {
+  const now = new Date();
+  const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const [y, m] = month.split('-').map(Number);
+  const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  const people = (await loadPeople()).filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사')
+    .sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || (a.team || '').localeCompare(b.team || '', 'ko') || a.name.localeCompare(b.name, 'ko'));
+  const ref = doc(db, 'payroll', month);
+  const snap = await getDoc(ref);
+  const saved = snap.exists() ? snap.data().rows || {} : {};
+  const sal = {};
+  (await getDocs(collection(db, 'salaries'))).docs.forEach((d) => { sal[d.id] = d.data(); });
+  const rows = {};
+  people.forEach((p) => { rows[p.uid] = saved[p.uid] ? { ...saved[p.uid] } : { base: sal[p.uid]?.monthly || 0, status: '작성중' }; });
+  let dirty = false;
+
+  const cell = (uid, k, cls = '') => `<td class="${cls}"><input class="pin" data-u="${uid}" data-k="${k}" inputmode="numeric" value="${num(rows[uid][k]) ? comma(num(rows[uid][k])) : ''}" placeholder="0"></td>`;
+  shell(`
+    <div class="row between"><div><p class="eyebrow">PAYROLL</p><h1>급여 관리</h1></div>
+      <div class="row"><button id="prev" class="ghost">◀</button><b class="monthLbl">${y}년 ${m}월</b><button id="next" class="ghost">▶</button></div></div>
+    <div class="row between"><span class="muted sm">총 ${people.length}명 · 관리자만 볼 수 있어요 · 칸을 눌러 바로 입력하세요</span>
+      <div class="row"><button id="copyPrev" class="ghost sm">📋 전월 불러오기</button></div></div>
+    <div class="pay"><table>
+      <thead>
+        <tr><th rowspan="2">순번</th><th rowspan="2" class="nm">직원명</th><th rowspan="2">팀</th><th rowspan="2">역할</th>
+          <th rowspan="2" class="hl">총 인건비<br><small>(A+C+D)</small></th><th rowspan="2">실수령액<br><small>(A−B)</small></th>
+          <th colspan="${PAY_A.length + 1}" class="ga">지급항목 (A)</th><th class="gb">공제 (B)</th><th class="gc">퇴직 (C)</th><th class="gd">지원 (D)</th>
+          <th rowspan="2">메모</th><th rowspan="2">상태</th></tr>
+        <tr>${PAY_A.map(([, t]) => `<th>${t}</th>`).join('')}<th class="ga">지급 계</th>${PAY_X.map(([, t, g]) => `<th class="g${g}">${t}</th>`).join('')}</tr>
+      </thead>
+      <tbody>
+        ${people.map((p, i) => `<tr data-row="${p.uid}">
+          <td>${i + 1}</td><td class="nm"><b>${esc(p.name)}</b></td><td>${p.team ? `<span class="tag">${esc(p.team)}</span>` : '-'}</td><td>${esc(p.job || ROLES[p.role])}</td>
+          <td class="hl" data-t="cost"></td><td data-t="net"></td>
+          ${PAY_A.map(([k]) => cell(p.uid, k)).join('')}<td class="ga" data-t="a"></td>
+          ${PAY_X.map(([k, , g]) => cell(p.uid, k, 'g' + g)).join('')}
+          <td><input class="pin memo" data-u="${p.uid}" data-k="memo" value="${esc(rows[p.uid].memo || '')}"></td>
+          <td><select data-u="${p.uid}" data-k="status" class="st">${['작성중', '확정', '지급완료'].map((s) => `<option ${rows[p.uid].status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
+        </tr>`).join('')}
+      </tbody>
+      <tfoot><tr><td colspan="4">합계</td><td class="hl" data-f="cost"></td><td data-f="net"></td>
+        ${PAY_A.map(([k]) => `<td data-f="${k}"></td>`).join('')}<td class="ga" data-f="a"></td>${PAY_X.map(([k, , g]) => `<td class="g${g}" data-f="${k}"></td>`).join('')}<td colspan="2"></td></tr></tfoot>
+    </table></div>
+    <div class="kpis">
+      <div class="kpi big"><span>${m}월 총 인건비 (A+C+D)</span><b class="accent" id="fCost"></b></div>
+      <div class="kpi"><span>지급 총액 (A)</span><b id="fA"></b></div>
+      <div class="kpi"><span>실수령 총액 (A−B)</span><b id="fNet"></b></div>
+      <div class="kpi"><span>1인 평균 인건비</span><b id="fAvg"></b></div>
+    </div>
+    <div class="row"><button id="savePay" class="primary">저장</button><span class="muted sm" id="dirty"></span></div>
+    <p class="muted sm">총 인건비 = 지급 계(A) + 퇴직 적립(C) + 회사 부담 4대보험 등 지원(D). 실수령액 = 지급 계(A) − 공제(B). 기본급은 처음엔 직원 명부의 월 급여로 채워져요.</p>`);
+
+  const recalc = () => {
+    const tot = { cost: 0, net: 0, a: 0 }; [...PAY_A, ...PAY_X].forEach(([k]) => tot[k] = 0);
+    people.forEach((p) => {
+      const r = rows[p.uid], tr = $app.querySelector(`tr[data-row="${p.uid}"]`);
+      const a = sumA(r), c = totalCost(r), n = netPay(r);
+      tr.querySelector('[data-t=a]').textContent = comma(a);
+      tr.querySelector('[data-t=cost]').textContent = comma(c);
+      tr.querySelector('[data-t=net]').textContent = comma(n);
+      tot.a += a; tot.cost += c; tot.net += n; [...PAY_A, ...PAY_X].forEach(([k]) => tot[k] += num(r[k]));
+    });
+    Object.entries(tot).forEach(([k, v]) => { const el = $app.querySelector(`[data-f="${k}"]`); if (el) el.textContent = comma(v); });
+    document.getElementById('fCost').textContent = comma(tot.cost) + '원';
+    document.getElementById('fA').textContent = comma(tot.a) + '원';
+    document.getElementById('fNet').textContent = comma(tot.net) + '원';
+    document.getElementById('fAvg').textContent = people.length ? comma(tot.cost / people.length) + '원' : '-';
+  };
+  const mark = () => { dirty = true; document.getElementById('dirty').textContent = '저장 안 된 변경 있음'; };
+  $app.querySelectorAll('.pin, .st').forEach((el) => {
+    el.oninput = () => { rows[el.dataset.u][el.dataset.k] = el.classList.contains('memo') || el.classList.contains('st') ? el.value : num(el.value); mark(); recalc(); };
+    if (!el.classList.contains('memo') && !el.classList.contains('st')) {
+      el.onfocus = () => { el.value = num(el.value) || ''; el.select(); };
+      el.onblur = () => { el.value = num(el.value) ? comma(num(el.value)) : ''; };
+    }
+  });
+  recalc();
+  const leave = (fn) => () => { if (dirty && !confirm('저장하지 않은 변경이 있어요. 이동할까요?')) return; fn(); };
+  document.getElementById('prev').onclick = leave(() => go('payroll', { month: shift(-1) }));
+  document.getElementById('next').onclick = leave(() => go('payroll', { month: shift(1) }));
+  document.getElementById('copyPrev').onclick = async () => {
+    const p = await getDoc(doc(db, 'payroll', shift(-1)));
+    if (!p.exists()) return toast('전월 급여 기록이 없어요');
+    if (!confirm('전월 금액으로 이번 달 표를 채울까요? (저장 전까지는 반영되지 않아요)')) return;
+    const prev = p.data().rows || {};
+    people.forEach((x) => { if (prev[x.uid]) { rows[x.uid] = { ...prev[x.uid], status: '작성중' }; } });
+    $app.querySelectorAll('.pin, .st').forEach((el) => {
+      const v = rows[el.dataset.u][el.dataset.k];
+      el.value = el.classList.contains('memo') || el.classList.contains('st') ? (v || (el.classList.contains('st') ? '작성중' : '')) : (num(v) ? comma(num(v)) : '');
+    });
+    mark(); recalc();
+  };
+  document.getElementById('savePay').onclick = async () => {
+    await setDoc(ref, { rows, updatedAt: serverTimestamp(), updatedBy: me.name });
+    dirty = false; document.getElementById('dirty').textContent = ''; toast('저장했어요');
+  };
 }
 
 async function renderSchedule(head, bindTabs) {

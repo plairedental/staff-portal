@@ -62,6 +62,11 @@ service cloud.firestore {
       allow write: if hasRole(['admin', 'chief']);
     }
 
+    // 월별 급여표: 관리자만
+    match /payroll/{month} {
+      allow read, write: if isAdmin();
+    }
+
     // 매뉴얼: 승인된 직원 모두 읽기, 관리자·총괄실장 수정
     match /manuals/{id} {
       allow read: if active();
