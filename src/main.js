@@ -624,14 +624,15 @@ function paySplit(annual, meal = 200000) {
   return { month, base, ot: month - meal - base, meal };
 }
 
+const telFmt = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 11 ? d.replace(/(\d{3})(\d{4})(\d{4})/, '$1-$2-$3') : d.length === 10 ? d.replace(/(\d{2,3})(\d{3,4})(\d{4})/, '$1-$2-$3') : p; };
 function contractHtml(v, co) {
   const t = (s) => esc(s || '');
   const period = `${krDate(v.start) || '&nbsp;'} ~ ${v.end ? krDate(v.end) : '기간의 정함 없음'}`;
   return `<div class="paper contract">
   <h2>표준 근로계약서</h2>
   <p>${t(co.name)} 대표원장 ${t(co.ceo)} (이하 '사업주'라 함)과 근로자 (이하 '근로자'라 함)는 상호 신의성실의 원칙에 입각하여 다음과 같이 근로계약을 체결하고 이를 성실히 이행할 것을 확약한다.</p>
-  <table class="dt info4"><colgroup><col style="width:13%"><col style="width:27%"><col style="width:15%"><col style="width:45%"></colgroup><tr><th>성명</th><td>${t(v.name)}</td><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
-    <tr><th>연락처</th><td>${t(v.phone)}</td><th>주소</th><td>${t(v.addr)}</td></tr>
+  <table class="dt info4"><colgroup><col style="width:12%"><col style="width:21%"><col style="width:15%"><col style="width:52%"></colgroup><tr><th>성명</th><td>${t(v.name)}</td><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
+    <tr><th>연락처</th><td>${t(telFmt(v.phone))}</td><th>주소</th><td>${t(v.addr)}</td></tr>
     <tr><th>소속부서</th><td>${t(v.dept)}</td><th>근무장소</th><td>${t(co.name)} 사업장 소재지 및 업무상 필요한 일체의 장소</td></tr></table>
   <h3>제1조 [ 근로계약기간 ]</h3>
   <table class="dt"><tr><th>근로계약기간</th><td>${period}</td></tr></table>
@@ -687,7 +688,7 @@ function contractHtml(v, co) {
       <tr><th>소재지</th><td>${t(co.addr)}</td></tr><tr><th>대표자</th><td>${t(co.ceo)}&nbsp;&nbsp;(직인/서명)</td></tr></table>
     <table class="dt"><tr><th colspan="2" class="center">[ 근 로 자 ]</th></tr>
       <tr><th>주소</th><td>${t(v.addr)}</td></tr><tr><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
-      <tr><th>연락처</th><td>${t(v.phone)}</td></tr><tr><th>성명</th><td>${t(v.name)}&nbsp;&nbsp;(서명 또는 인)</td></tr></table>
+      <tr><th>연락처</th><td>${t(telFmt(v.phone))}</td></tr><tr><th>성명</th><td>${t(v.name)}&nbsp;&nbsp;(서명 또는 인)</td></tr></table>
   </div></div>`;
 }
 
@@ -697,7 +698,7 @@ function certHtml(v, co) {
   return `<div class="paper cert">
   <h2>재&nbsp;&nbsp;직&nbsp;&nbsp;증&nbsp;&nbsp;명&nbsp;&nbsp;서</h2>
   <h3>[ 1. 인적사항 ]</h3>
-  <table class="dt info4"><colgroup><col style="width:13%"><col style="width:27%"><col style="width:15%"><col style="width:45%"></colgroup><tr><th>성명</th><td>${t(v.name)}</td><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
+  <table class="dt info4"><colgroup><col style="width:12%"><col style="width:21%"><col style="width:15%"><col style="width:52%"></colgroup><tr><th>성명</th><td>${t(v.name)}</td><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
     <tr><th>주소</th><td colspan="3">${t(v.addr)}</td></tr></table>
   <h3>[ 2. 재직사항 ]</h3>
   <table class="dt"><tr><th>회사명</th><td>${t(co.name)}</td><th>대표자</th><td>대표원장 ${t(co.ceo)}</td></tr>
