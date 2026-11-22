@@ -2366,16 +2366,31 @@ function slipHtml(s) {
   </div>`;
 }
 async function renderMySlips() {
-  const snap = await getDocs(query(collection(db, 'payslips'), where('uid', '==', me.uid)));
-  const slips = snap.docs.map((d) => d.data()).sort((a, b) => b.month.localeCompare(a.month));
-  const cur = slips.find((s) => s.month === sub?.month) || slips[0];
+  const admin = me.role === 'admin';
+  const snap = await getDocs(admin ? collection(db, 'payslips') : query(collection(db, 'payslips'), where('uid', '==', me.uid)));
+  const all = snap.docs.map((d) => d.data());
+  // 관리자: 직원을 골라서 볼 수 있음
+  let who = me.uid, people = [];
+  if (admin) {
+    const names = {}; all.forEach((x) => { names[x.uid] = x.name || names[x.uid] || ''; });
+    const order = orgOrder(await loadOrg());
+    const rankOf = (n) => { const i = order.findIndex((o) => o.name === n); return i < 0 ? 999 : i; };
+    people = Object.entries(names).map(([uid, name]) => ({ uid, name })).sort((a, b) => rankOf(a.name) - rankOf(b.name) || a.name.localeCompare(b.name, 'ko'));
+    who = sub?.uid || (names[me.uid] !== undefined ? me.uid : people[0]?.uid);
+  }
+  const slips = all.filter((x) => x.uid === who).sort((a, b) => b.month.localeCompare(a.month));
+  const cur = slips.find((x) => x.month === sub?.month) || slips[0];
   shell(`
     <div class="row between noprint"><div><p class="eyebrow">PAYSLIP</p><h1>급여명세서</h1></div>
-      ${slips.length ? `<div class="row"><select id="sm" style="width:auto;flex:none">${slips.map((s) => `<option value="${s.month}" ${s === cur ? 'selected' : ''}>${monthTitle(s.month)}</option>`).join('')}</select>
-        <button id="print" class="ghost">🖨️ 인쇄 / PDF 저장</button></div>` : ''}</div>
+      <div class="row">
+        ${admin && people.length ? `<select id="su" style="width:auto;flex:none" title="관리자: 직원 선택">${people.map((x) => `<option value="${x.uid}" ${x.uid === who ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : ''}
+        ${slips.length ? `<select id="sm" style="width:auto;flex:none">${slips.map((x) => `<option value="${x.month}" ${x === cur ? 'selected' : ''}>${monthTitle(x.month)}</option>`).join('')}</select>
+        <button id="print" class="ghost">🖨️ 인쇄 / PDF 저장</button>` : ''}</div></div>
+    ${admin ? '<p class="muted sm noprint">관리자는 직원을 골라 그 직원이 보는 명세서를 그대로 확인할 수 있어요. (상태가 확정·지급완료인 달만 직원에게 보여요)</p>' : ''}
     ${cur ? `<section class="card slipCard">${slipHtml(cur)}</section>` : '<section class="card"><p class="muted">아직 공개된 급여명세서가 없어요.</p></section>'}
     <p class="muted sm noprint">명세서는 본인과 관리자만 볼 수 있어요.</p>`);
-  document.getElementById('sm')?.addEventListener('change', (e) => go('slips', { month: e.target.value }));
+  document.getElementById('su')?.addEventListener('change', (e) => go('slips', { uid: e.target.value }));
+  document.getElementById('sm')?.addEventListener('change', (e) => go('slips', { uid: who, month: e.target.value }));
   document.getElementById('print')?.addEventListener('click', () => window.print());
 }
 
