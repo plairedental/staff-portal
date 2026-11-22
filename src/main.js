@@ -474,6 +474,7 @@ async function renderPerson(uid) {
 
   let sal = {};
   if (!isNew) { const s = await getDoc(doc(db, 'salaries', uid)); sal = s.exists() ? s.data() : {}; }
+  const tmP = {}; ((await loadOrg()).groups || []).forEach((g) => (g.members || []).forEach((m) => { tmP[m.name] = m.title || ''; }));
   const f = (id, label, v, type = 'text') => `<label>${label}<input id="${id}" type="${type}" value="${esc(v ?? '')}"></label>`;
   shell(`
     ${back}<h1>${isNew ? '직원 추가' : esc(p.name)}</h1>
@@ -489,6 +490,7 @@ async function renderPerson(uid) {
       ${f('hireDate', '입사일', p.hireDate, 'date')}
       <label>재직상태<select id="work">${WORK.map((w) => `<option ${(p.work || '재직') === w ? 'selected' : ''}>${w}</option>`).join('')}</select></label>
       ${f('annualAdjust', '연차 조정 (일, 예: 2 또는 -1)', p.annualAdjust ?? '', 'number')}
+      <label class="row sm"><input type="checkbox" id="noLeave" ${noLeave(p, tmP) ? 'checked' : ''}> 연차 대상 아님 (연차 현황 목록에서 빼기)</label>
     </section>
     <section class="card form">
       <h2>연봉 <span class="muted sm">(본인과 관리자만 볼 수 있어요)</span></h2>
@@ -513,7 +515,8 @@ async function renderPerson(uid) {
       name: val('name'), job: val('job'), dept: val('dept'), team: val('team'),
       role: document.getElementById('role').value, phone: val('phone'),
       hireDate: val('hireDate'), work: document.getElementById('work').value,
-      annualAdjust: val('annualAdjust') === '' ? 0 : Number(val('annualAdjust'))
+      annualAdjust: val('annualAdjust') === '' ? 0 : Number(val('annualAdjust')),
+      noLeave: document.getElementById('noLeave').checked
     };
     if (isRoster) data.email = val('email');
     let id = uid;
@@ -614,6 +617,14 @@ const canApprove = () => ['admin', 'chief'].includes(me?.role);
 const daysOf = (l) => HALF[l.type] ?? Number(l.days ?? (l.hours || 0) / 8);
 function fmtD(d) { return `${Math.round(d * 10) / 10}일`; }
 
+// 연차 사용기한 = 다음 입사기념일 하루 전 (예: 입사 2025-02-05 → 2027-02-04)
+const dayBefore = (d) => { const x = new Date(d); x.setDate(x.getDate() - 1); return ymd(x); };
+const ddayOf = (s) => { const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((parseD(s) - t) / 86400000); };
+const ddayCls = (n) => n <= 30 ? 'dd-red' : n <= 60 ? 'dd-yellow' : '';
+const ddayTxt = (n) => n > 0 ? `D-${n}` : n === 0 ? 'D-DAY' : `D+${-n}`;
+// 연차 대상 아님: 회원관리에서 체크했거나, 대표원장
+const noLeave = (u, titleMap = {}) => u.noLeave === true || (u.noLeave === undefined && /대표원장/.test(`${u.job || ''} ${titleMap[u.name] || ''}`));
+
 // 근로기준법 기준 연차 (입사일 기준, 출근율 80% 이상 가정)
 // - 입사 1년 미만: 1개월 개근마다 1일 (최대 11일)
 // - 1년 이상: 15일, 3년차부터 2년마다 1일 가산 (최대 25일)
@@ -630,14 +641,14 @@ function leavePeriod(hireDate, today = new Date()) {
     months = Math.max(0, Math.min(11, months));
     const end = new Date(h); end.setFullYear(end.getFullYear() + 1);
     const next = new Date(h); next.setMonth(h.getMonth() + months + 1);
-    return { start: hireDate, end: ymd(end), days: months, label: `입사 1년 미만 · 근속 ${months}개월`,
+    return { start: hireDate, end: ymd(end), last: dayBefore(end), days: months, label: `입사 1년 미만 · 근속 ${months}개월`,
       next: months < 11 ? `다음 연차 발생일 ${ymd(next)} (+1일)` : `1년이 되는 ${ymd(end)}에 15일 발생` };
   }
   const start = new Date(h); start.setFullYear(h.getFullYear() + years);
   const end = new Date(start); end.setFullYear(end.getFullYear() + 1);
   const days = Math.min(25, 15 + Math.floor((years - 1) / 2));
   const nextDays = Math.min(25, 15 + Math.floor(years / 2));
-  return { start: ymd(start), end: ymd(end), days, label: `근속 ${years}년 (${years + 1}년차)`,
+  return { start: ymd(start), end: ymd(end), last: dayBefore(end), days, label: `근속 ${years}년 (${years + 1}년차)`,
     next: `${ymd(end)}에 ${nextDays}일 새로 발생` };
 }
 function balanceOf(user, leaves) {
@@ -695,13 +706,19 @@ function leaveDash(user, leaves) {
   const sum = b.used || 1;
   const pct = (h) => (h / sum * 100).toFixed(1) + '%';
   return `
-    ${b.period ? `<p class="muted sm">${b.period.label} · 연차 기간 ${b.period.start} ~ ${b.period.end}${b.period.next ? ' · ' + b.period.next : ''}</p>`
-      : '<p class="msg">입사일이 등록되지 않아 연차를 계산할 수 없어요. 인사관리 → 직원 명부에서 입사일을 넣어 주세요.</p>'}
+    ${b.period ? (() => { const n = ddayOf(b.period.last); return `
+      <div class="leftBanner ${ddayCls(n)}">
+        <div><small>정산 잔여</small><b>${fmtD(b.left)}</b></div>
+        <div><small>사용기한</small><b>${b.period.last}</b><span class="ddTag">${ddayTxt(n)}</span></div>
+        <div class="sm">${n <= 60 ? '⏰ 사용기한이 얼마 남지 않았어요. 남은 연차를 계획해 주세요.' : '남은 연차는 사용기한까지 사용해 주세요.'}</div>
+      </div>
+      <p class="muted sm">${b.period.label} · 연차 기간 ${b.period.start} ~ ${b.period.last}${b.period.next ? ' · ' + b.period.next : ''}</p>`; })()
+      : '<p class="msg">입사일이 등록되지 않아 연차를 계산할 수 없어요. 회원관리에서 입사일을 넣어 주세요.</p>'}
     <div class="kpis">
       <div class="kpi"><span>부여</span><b>${fmtD(b.total)}</b>${Number(user.annualAdjust || 0) ? `<small>조정 ${user.annualAdjust > 0 ? '+' : ''}${user.annualAdjust}일 포함</small>` : ''}</div>
       <div class="kpi"><span>사용</span><b>${fmtD(b.used)}</b></div>
       <div class="kpi"><span>잔여</span><b class="${b.left < 0 ? 'neg' : 'accent'}">${fmtD(b.left)}</b></div>
-      <div class="kpi"><span>대기 중 신청</span><b>${b.pending}건</b></div>
+      <div class="kpi"><span>신청 대기</span><b>${b.pending}건</b></div>
     </div>
     <section class="card">
       <div class="row between"><div><h2>사용 형태별 합계</h2><p class="muted sm">승인된 신청을 연차 차감량으로 환산했어요. (오전반차 0.4일 · 오후반차 0.6일)</p></div>
@@ -772,6 +789,8 @@ function bindRules(text) {
 
 async function renderMyLeave() {
   const leaves = (await loadLeaves()).filter((l) => l.uid === me.uid);
+  const tm = {}; ((await loadOrg()).groups || []).forEach((g) => (g.members || []).forEach((m) => { tm[m.name] = m.title || ''; }));
+  if (noLeave(me, tm)) return shell(`<p class="eyebrow">MY LEAVE</p><h1>내 연차</h1><section class="card"><p class="muted">연차 관리 대상이 아니에요.</p></section>`);
   const rules = await rulesSection();
   const today = ymd(new Date());
   shell(`
@@ -837,14 +856,17 @@ async function renderLeaveAll() {
   }
 
   const pending = leaves.filter((l) => l.status === '대기');
-  const rows = people.map((p) => ({ p, b: balanceOf(p, leaves) }));
+  const org = await loadOrg();
+  const tm = {}, deptOf = {}; (org.groups || []).forEach((g) => (g.members || []).forEach((m) => { tm[m.name] = m.title || ''; deptOf[m.name] = g.name; }));
+  const rows = people.filter((p) => !noLeave(p, tm)).map((p) => ({ p, b: balanceOf(p, leaves) }))
+    .sort((a, b) => b.b.left - a.b.left || a.p.name.localeCompare(b.p.name, 'ko'));
   const month = sub?.month || '';
   const months = [...new Set(leaves.map((l) => l.start.slice(0, 7)))].sort().reverse();
   const hist = leaves.filter((l) => !month || l.start.startsWith(month));
   shell(`
     <p class="eyebrow">LEAVE OVERVIEW</p><h1>직원 연차 현황</h1>
     <div class="kpis">
-      <div class="kpi"><span>직원 수</span><b>${people.length}명</b></div>
+      <div class="kpi"><span>연차 대상</span><b>${rows.length}명</b></div>
       <div class="kpi"><span>전체 부여</span><b>${fmtD(rows.reduce((s, r) => s + r.b.total, 0))}</b></div>
       <div class="kpi"><span>전체 사용</span><b>${fmtD(rows.reduce((s, r) => s + r.b.used, 0))}</b></div>
       <div class="kpi"><span>승인 대기</span><b class="${pending.length ? 'accent' : ''}">${pending.length}건</b></div>
@@ -853,14 +875,16 @@ async function renderLeaveAll() {
     <section class="card">
       <h2>직원별 연차</h2>
       <div class="tbl"><table>
-        <tr><th>이름</th><th>팀</th><th>입사일</th><th>근속</th><th>부여</th><th>사용</th><th>잔여</th><th>사용률</th><th>대기</th></tr>
-        ${rows.map(({ p, b }) => `<tr class="click" data-u="${p.uid}">
-          <td><b>${esc(p.name)}</b>${p.status === 'roster' ? ' <span class="tag gray">미가입</span>' : ''}</td><td>${esc(p.team || '-')}</td>
+        <tr><th>이름</th><th>부서</th><th>팀</th><th>입사일</th><th>근속</th><th>사용기한</th><th>남은 날</th><th>부여</th><th>사용</th><th>잔여</th><th>사용률</th><th>대기</th></tr>
+        ${rows.map(({ p, b }) => { const n = b.period ? ddayOf(b.period.last) : null; return `<tr class="click" data-u="${p.uid}">
+          <td><b>${esc(p.name)}</b>${p.status === 'roster' ? ' <span class="tag gray">미가입</span>' : ''}</td>
+          <td>${esc(p.dept || deptOf[p.name] || '-')}</td><td>${esc(p.team || '-')}</td>
           <td>${p.hireDate || '<span class="msg">미등록</span>'}</td><td class="sm">${b.period ? b.period.label.replace('입사 1년 미만 · ', '') : '-'}</td>
+          <td>${b.period ? b.period.last : '-'}</td><td>${n === null ? '-' : `<span class="ddTag ${ddayCls(n)}">${ddayTxt(n)}</span>`}</td>
           <td>${fmtD(b.total)}</td><td>${fmtD(b.used)}</td><td><b class="${b.left < 0 ? 'neg' : ''}">${fmtD(b.left)}</b></td>
-          <td><div class="mini"><i style="width:${b.total ? Math.min(100, b.used / b.total * 100) : 0}%"></i></div></td><td>${b.pending || ''}</td></tr>`).join('')}
+          <td><div class="mini"><i style="width:${b.total ? Math.min(100, b.used / b.total * 100) : 0}%"></i></div></td><td>${b.pending || ''}</td></tr>`; }).join('')}
       </table></div>
-      <p class="muted sm">이름을 누르면 그 직원의 연차 대시보드를 볼 수 있어요.</p>
+      <p class="muted sm">잔여일이 많은 순서예요. 사용기한(다음 입사기념일 하루 전)까지 <span class="ddTag dd-yellow">60일 이내</span> <span class="ddTag dd-red">30일 이내</span>는 색으로 표시돼요. 이름을 누르면 그 직원의 연차 대시보드를 볼 수 있어요.<br>대표원장처럼 연차 대상이 아닌 사람은 목록에서 빠져요. (회원관리 → "연차 대상 아님"으로 바꿀 수 있어요)</p>
     </section>
     <section class="card">
       <div class="row between"><h2>전체 사용 내역</h2>

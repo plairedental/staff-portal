@@ -394,3 +394,14 @@ table.cal { width: 100%; min-width: 640px; border-collapse: collapse; table-layo
 .pcSel { min-width: 5rem; padding: .35rem .4rem; }
 .chip.pc { border: 1px solid transparent; padding: .3rem .7rem; }
 .chip.pc.on { outline: 3px solid var(--text); outline-offset: 1px; }
+/* 연차 사용기한 */
+.ddTag { display: inline-block; font-size: .78rem; font-weight: 700; padding: .1rem .45rem; border-radius: 6px; background: #eef0f0; color: var(--muted); }
+.ddTag.dd-yellow, .dd-yellow .ddTag { background: #fde68a; color: #713f12; }
+.ddTag.dd-red, .dd-red .ddTag { background: #fecaca; color: #991b1b; }
+.leftBanner { display: grid; grid-template-columns: auto auto 1fr; gap: 2rem; align-items: center; background: var(--c); color: #fff; border-radius: 14px; padding: 1.1rem 1.4rem; margin: 1rem 0 .6rem; }
+.leftBanner small { display: block; opacity: .85; font-size: .8rem; }
+.leftBanner b { font-size: 1.9rem; }
+.leftBanner .ddTag { margin-left: .5rem; vertical-align: middle; background: rgba(255,255,255,.25); color: #fff; }
+.leftBanner.dd-yellow { background: #b7791f; } .leftBanner.dd-red { background: #c53030; }
+.leftBanner.dd-yellow .ddTag, .leftBanner.dd-red .ddTag { background: rgba(255,255,255,.3); color: #fff; }
+@media (max-width: 760px) { .leftBanner { grid-template-columns: 1fr 1fr; gap: .8rem; } .leftBanner > div:last-child { grid-column: 1 / -1; } .leftBanner b { font-size: 1.4rem; } }
