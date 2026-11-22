@@ -331,3 +331,33 @@ table.cal { width: 100%; min-width: 640px; border-collapse: collapse; table-layo
   .pickG small { width: 100%; }
 }
 .ghostUp { background: #fff; color: var(--text) !important; border: 1px solid var(--line); }
+
+/* 조직도 트리 */
+.tree { overflow-x: auto; padding-bottom: 1rem; }
+.tree ul { position: relative; display: flex; justify-content: center; padding: 1.4rem 0 0; margin: 0; }
+.tree > ul { padding-top: 0; }
+.tree li { list-style: none; position: relative; padding: 1.4rem .5rem 0; display: flex; flex-direction: column; align-items: center; }
+.tree > ul > li { padding-top: 0; }
+.tree li::before, .tree li::after { content: ''; position: absolute; top: 0; right: 50%; width: 50%; height: 1.4rem; border-top: 2px solid #c9d3d2; }
+.tree li::after { right: auto; left: 50%; border-left: 2px solid #c9d3d2; }
+.tree li:only-child::before, .tree li:only-child::after { border-top: none; }
+.tree li:first-child::before, .tree li:last-child::after { border-top: none; }
+.tree li:last-child::before { border-right: 2px solid #c9d3d2; border-radius: 0 6px 0 0; }
+.tree li:first-child::after { border-radius: 6px 0 0 0; }
+.tree li:only-child::after { border-left: 2px solid #c9d3d2; }
+.tree > ul > li::before, .tree > ul > li::after { display: none; }
+.tree ul ul::before { content: ''; position: absolute; top: 0; left: 50%; height: 1.4rem; border-left: 2px solid #c9d3d2; }
+.tree .og { width: 250px; text-align: left; }
+.lvLine { display: flex; align-items: center; gap: .6rem; margin: 1.2rem 0 .5rem; color: var(--muted); font-size: .78rem; font-weight: 700; }
+.lvLine::after { content: ''; flex: 1; border-top: 2px dashed var(--line); }
+.parentSel select { width: auto; flex: none; margin: 0; }
+.depth { color: var(--muted); font-weight: 800; }
+@media (max-width: 760px) {
+  .tree ul { display: block; padding: 0 0 0 1rem; border-left: 2px solid #c9d3d2; margin-left: .6rem; }
+  .tree > ul { border-left: none; padding: 0; margin: 0; }
+  .tree li { display: block; padding: .6rem 0 0; }
+  .tree li::before, .tree li::after, .tree ul ul::before { display: none; }
+  .tree .og { width: auto; }
+}
+.tree > ul { width: max-content; min-width: 100%; margin: 0 auto; }
+.tree .og { width: 230px; }
