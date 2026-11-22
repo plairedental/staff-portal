@@ -179,6 +179,7 @@ function categories() {
     ], admin: [
       ['dash', '대시보드', '📊', '이번 달 목표 대비 성과와 인센티브를 한눈에 봐요.', () => me.role === 'admin'],
       ['daily', '일계표', '🧮', '날짜별 수입·지출·구강용품 판매와 마감을 기록해요.', () => me.role === 'admin'],
+      ['goods', '구강용품', '🪥', '구강용품 품목·가격·재고·매입·판매를 관리해요.', () => me.role === 'admin'],
       ['incentive', '목표매출·인센티브', '🎯', '인건비 비율로 목표 매출을 정하고 팀별 인센티브를 계산해요.', () => me.role === 'admin']
     ] },
     { key: 'hr', label: '인사관리', icon: '👥', items: [
@@ -264,7 +265,7 @@ function shell(content) {
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
-      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'daily'].includes(key) ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'daily', 'goods'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { const c = cats.find((x) => x.key === b.dataset.cat); goKey((c.items[0] || c.admin[0])[0]); });
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
@@ -297,6 +298,7 @@ async function render() {
     if (view === 'incentive' && me.role === 'admin') return await renderIncentive();
     if (view === 'dash' && me.role === 'admin') return await renderDash();
     if (view === 'daily' && me.role === 'admin') return await renderDaily();
+    if (view === 'goods' && me.role === 'admin') return await renderGoods();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
     if (view === 'docs' && me.role === 'admin') return await renderDocs();
     if (view === 'docreq') return await renderDocReq();
@@ -645,7 +647,7 @@ async function renderDaily() {
   const date = sub?.date || today();
   const month = date.slice(0, 7);
   const [y, m] = month.split('-').map(Number);
-  const [ms, ds, people] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'daily', date)), loadPeople()]);
+  const [ms, ds, people, products] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'daily', date)), loadPeople(), loadProducts(true)]);
   const has = {}; ms.docs.forEach((x) => { has[x.id] = dailyTotals(x.data()).total; });
   const d = ds.exists() ? JSON.parse(JSON.stringify(ds.data())) : {};
   const blank = { income: () => ({ chart: '', name: '', cash: 0, transfer: 0, card: 0, memo: '' }), goods: () => ({ chart: '', name: '', assist: '', product: '', staff: false, price: 0, qty: 1, disc: 0, pay: '', memo: '' }), expense: () => ({ item: '', amount: 0, memo: '' }) };
@@ -679,11 +681,13 @@ async function renderDaily() {
           <div class="tbl"><table class="mt dT"><tr><th>#</th><th>차트번호</th><th>이름</th><th>어시스트</th><th>제품명</th><th>직원</th><th class="r">판매가</th><th class="r">수량</th><th class="r">할인(%)</th><th class="r">최종금액</th><th>결제</th><th>메모</th><th></th></tr>
           ${d.goods.map((r, i) => `<tr><td>${i + 1}</td><td>${inp('goods', i, 'chart', '', '차트번호')}</td><td>${inp('goods', i, 'name', '', '이름')}</td>
             <td><select class="dIn" data-s="goods" data-i="${i}" data-k="assist"><option value="">선택</option>${staffNames.map((n) => `<option ${r.assist === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
-            <td>${inp('goods', i, 'product', '', '제품명')}</td><td class="c"><input type="checkbox" class="dIn" data-s="goods" data-i="${i}" data-k="staff" ${r.staff ? 'checked' : ''}></td>
+            <td>${inp('goods', i, 'product', '', '제품 검색').replace('<input', '<input list="plist"')}</td><td class="c"><input type="checkbox" class="dIn" data-s="goods" data-i="${i}" data-k="staff" ${r.staff ? 'checked' : ''}></td>
             <td>${inp('goods', i, 'price', 'n r')}</td><td>${inp('goods', i, 'qty', 'n r s')}</td><td>${inp('goods', i, 'disc', 'n r s')}</td><td class="r" data-gf="${i}"></td>
             <td><select class="dIn" data-s="goods" data-i="${i}" data-k="pay"><option value="">선택</option>${PAYWAYS.map((w) => `<option ${r.pay === w ? 'selected' : ''}>${w}</option>`).join('')}</select></td>
             <td>${inp('goods', i, 'memo', '', '메모')}</td><td><button class="ghost sm" data-del="goods:${i}">🗑️</button></td></tr>`).join('')}
           <tr class="sum"><th colspan="9">합계</th><th class="r" data-sum="goods"></th><th colspan="3"></th></tr></table></div>
+          <datalist id="plist">${products.map((p) => `<option value="${esc(p.name)}">`).join('')}</datalist>
+          ${products.length ? '<p class="muted sm">제품을 고르면 판매가가 자동으로 들어가요. "직원"에 체크하면 직원단가로 바뀌어요.</p>' : '<p class="muted sm">구강용품 메뉴에서 품목을 등록하면 여기서 골라 쓸 수 있어요.</p>'}
           <button class="ghost sm" data-add="goods">+ 행 추가</button></section>
 
         <section class="card"><h3>지출 입력</h3>
@@ -729,6 +733,12 @@ async function renderDaily() {
       if (el.dataset.s) d[el.dataset.s][+el.dataset.i][el.dataset.k] = v;
       else if (el.dataset.c) d.close[el.dataset.c] = v;
       else if (el.dataset.dw) d.dw[el.dataset.dw] = v;
+      if (el.dataset.s === 'goods' && ['product', 'staff'].includes(el.dataset.k)) {
+        const g = d.goods[+el.dataset.i]; const pr = products.find((x) => x.name === String(g.product || '').trim());
+        if (pr) { g.productId = pr.id; g.price = g.staff && num(pr.staffPrice) ? num(pr.staffPrice) : num(pr.price);
+          const pi = $app.querySelector(`[data-s="goods"][data-i="${el.dataset.i}"][data-k="price"]`); if (pi) pi.value = comma(g.price); }
+        else if (el.dataset.k === 'product') delete g.productId;
+      }
       dirty = true; recalc();
     };
     el.oninput = set; el.onchange = set;
@@ -759,8 +769,8 @@ async function renderDash() {
   const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
   const [y, m] = month.split('-').map(Number);
   const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
-  const [ds, incDoc, incAll, people, salSnap, org] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'incentive', month)),
-    getDocs(collection(db, 'incentive')), loadPeople(), getDocs(collection(db, 'salaries')), loadOrg()]);
+  const [ds, incDoc, incAll, people, salSnap, org, products] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'incentive', month)),
+    getDocs(collection(db, 'incentive')), loadPeople(), getDocs(collection(db, 'salaries')), loadOrg(), loadProducts(true)]);
   let inc = incDoc.exists() ? incDoc.data() : null;
   if (!inc) { const prev = incAll.docs.map((x) => x.id).filter((k) => k < month).sort().pop(); if (prev) inc = incAll.docs.find((x) => x.id === prev).data(); }
   const sal = {}; salSnap.docs.forEach((x) => { sal[x.id] = x.data(); });
@@ -798,7 +808,13 @@ async function renderDash() {
   const unitRes = (inc?.units || []).filter((u) => num(u.rate) > 0).map((u) => ({ name: u.name, amt: Math.max(0, totalOver) * num(u.rate) / 100, rate: u.rate }));
   const docRes = doctors.map((p) => { const r = num(inc?.doctorRatios?.[p.uid]) || ratio, tg = monthly(p.uid) / (r / 100), rev = byStaff[p.name] || 0;
     return { p, tg, rev, amt: Math.max(0, rev - tg) * num(inc?.doctorRates?.[p.uid]) / 100 }; });
-  const incTotal = teamCards.reduce((s, c) => s + c.amt, 0) + unitRes.reduce((s, u) => s + u.amt, 0) + docRes.reduce((s, d) => s + d.amt, 0);
+  // 구강용품: 판매 마진 × 비율 → 판매한 어시스트에게
+  const goodsBy = {};
+  days.forEach((x) => (x.goods || []).forEach((g) => { if (!g.product && !g.productId) return; const pr = findProduct(products, g); const mg = goodsFinal(g) - (pr ? num(pr.cost) * num(g.qty) : 0);
+    const k = g.assist || '(어시스트 없음)'; goodsBy[k] ||= { mg: 0, n: 0 }; goodsBy[k].mg += mg; goodsBy[k].n += num(g.qty); }));
+  const goodsRate = num(inc?.goodsRate);
+  const goodsTotal = Object.values(goodsBy).reduce((s, v) => s + Math.max(0, v.mg) * goodsRate / 100, 0);
+  const incTotal = teamCards.reduce((s, c) => s + c.amt, 0) + unitRes.reduce((s, u) => s + u.amt, 0) + docRes.reduce((s, d) => s + d.amt, 0) + goodsTotal;
   const maxDay = Math.max(1, ...byDay.map((x) => x.v));
   const W = (n) => comma(Math.round(n));
 
@@ -827,6 +843,7 @@ async function renderDash() {
         <dl><dt>합계</dt><dd class="accent">${W(c.amt)}</dd><dt>팀장 최대 (${c.lm}%)</dt><dd>${W(c.amt * c.lm / 100)}</dd><dt>팀원 최소</dt><dd>${W(c.amt * (100 - c.lm) / 100)}</dd></dl>
         <p class="muted sm">${c.mem.map((p) => `${esc(p.name)}${p.role === 'leader' ? ' (팀장)' : ''}`).join(' · ') || '팀원 없음'}</p></div>`).join('')}
       ${docRes.length ? `<div class="card dCard"><h4>👨‍⚕️ 원장</h4><dl>${docRes.map((r) => `<dt>${esc(r.p.name)} <small class="muted">목표 ${W(r.tg)} · 매출 ${W(r.rev)}</small></dt><dd class="accent">${W(r.amt)}</dd>`).join('')}</dl></div>` : ''}
+      <div class="card dCard"><h4>🪥 구강용품 (마진의 ${goodsRate}%)</h4><dl>${Object.entries(goodsBy).map(([k, v]) => `<dt>${esc(k)} <small class="muted">${v.n}개 · 마진 ${W(v.mg)}</small></dt><dd class="accent">${W(Math.max(0, v.mg) * goodsRate / 100)}</dd>`).join('') || '<dt class="muted">이 달 판매가 없어요</dt><dd></dd>'}</dl></div>
       <div class="card dCard"><h4>🏆 비진료부</h4><dl>${unitRes.map((u) => `<dt>${esc(u.name)} (${u.rate}%)</dt><dd>${W(u.amt)}</dd>`).join('') || '<dt class="muted">비율이 정해진 항목이 없어요</dt><dd></dd>'}</dl></div>
     </div>
 
@@ -856,10 +873,109 @@ async function renderDash() {
   });
 }
 
+// ---------- 구강용품 (품목·재고·매입·판매) — 관리자 ----------
+// products/{id}: {vendor, code, name, cost, price, staffPrice, memo}
+// purchases/{id}: {date, productId, name, qty, cost, vendor, memo}
+let productCache = null;
+async function loadProducts(force = false) {
+  if (productCache && !force) return productCache;
+  const s = await getDocs(collection(db, 'products'));
+  productCache = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
+  return productCache;
+}
+const findProduct = (list, g) => list.find((p) => (g.productId && p.id === g.productId) || (g.product && p.name === g.product.trim()));
+const marginOf = (p) => num(p.price) - num(p.cost);
+
+async function renderGoods() {
+  const tab = sub?.tab || 'list';
+  const now = new Date();
+  const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const [products, purSnap, daySnap] = await Promise.all([loadProducts(true), getDocs(collection(db, 'purchases')), getDocs(collection(db, 'daily'))]);
+  const purchases = purSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  // 판매: 일계표의 구강용품 판매내역
+  const sales = [];
+  daySnap.docs.forEach((d) => (d.data().goods || []).forEach((g) => { if (g.product || g.productId) sales.push({ ...g, date: d.id }); }));
+  const inQty = {}, outQty = {};
+  purchases.forEach((x) => { inQty[x.productId] = (inQty[x.productId] || 0) + num(x.qty); });
+  sales.forEach((g) => { const p = findProduct(products, g); if (p) outQty[p.id] = (outQty[p.id] || 0) + num(g.qty); });
+  const stock = (p) => (inQty[p.id] || 0) - (outQty[p.id] || 0) + num(p.baseStock);
+  const W = (n) => comma(Math.round(n));
+  const tabs = [['list', '📦 품목·재고'], ['buy', '🧾 매입 내역'], ['sell', '🛒 판매 현황']];
+  let body = '';
+  if (tab === 'list') {
+    body = `<div class="row between"><p class="muted sm">재고 = 처음 재고 + 매입 수량 − 일계표 판매 수량</p><button class="primary" id="pNew">+ 새 제품</button></div>
+      <div class="tbl"><table class="mt incT"><tr><th>거래처</th><th>제품코드</th><th>제품명</th><th class="r">구매단가</th><th class="r">판매단가</th><th class="r">직원단가</th><th class="r">마진</th><th class="r">마진율</th><th class="r">재고</th><th></th></tr>
+      ${products.map((p) => `<tr><td>${esc(p.vendor)}</td><td>${esc(p.code)}</td><td><b>${esc(p.name)}</b>${p.memo ? `<br><small class="muted">${esc(p.memo)}</small>` : ''}</td>
+        <td class="r">${W(p.cost)}</td><td class="r">${W(p.price)}</td><td class="r">${W(p.staffPrice)}</td><td class="r accent">${W(marginOf(p))}</td><td class="r">${num(p.price) ? Math.round(marginOf(p) / num(p.price) * 100) : 0}%</td>
+        <td class="r"><b class="${stock(p) <= 0 ? 'neg' : ''}">${stock(p)}</b></td><td class="nowrap"><button class="ghost sm" data-pe="${p.id}">✏️</button></td></tr>`).join('') || '<tr><td colspan="10" class="muted">아직 등록한 제품이 없어요.</td></tr>'}</table></div>`;
+  } else if (tab === 'buy') {
+    body = `<section class="card form inline"><h3>매입 등록</h3><div class="row wrapRow">
+        <label>날짜<input type="date" id="bDate" value="${today()}"></label>
+        <label>제품<select id="bProd">${products.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
+        <label>수량<input id="bQty" inputmode="numeric" value="1"></label>
+        <label>구매단가<input id="bCost" inputmode="numeric" value="${products[0] ? num(products[0].cost) : ''}"></label>
+        <label>메모<input id="bMemo"></label><button class="primary" id="bAdd">등록</button></div></section>
+      <div class="tbl"><table class="mt incT"><tr><th>날짜</th><th>거래처</th><th>제품명</th><th class="r">수량</th><th class="r">구매단가</th><th class="r">금액</th><th>메모</th><th></th></tr>
+      ${purchases.map((x) => `<tr><td>${esc(x.date)}</td><td>${esc(x.vendor)}</td><td>${esc(x.name)}</td><td class="r">${num(x.qty)}</td><td class="r">${W(x.cost)}</td><td class="r">${W(num(x.qty) * num(x.cost))}</td><td>${esc(x.memo)}</td><td><button class="ghost sm" data-bdel="${x.id}">🗑️</button></td></tr>`).join('') || '<tr><td colspan="8" class="muted">매입 내역이 없어요.</td></tr>'}</table></div>`;
+  } else {
+    const [y, m] = month.split('-').map(Number);
+    const ms = sales.filter((g) => g.date.startsWith(month)).sort((a, b) => a.date.localeCompare(b.date));
+    const rows = ms.map((g) => { const p = findProduct(products, g); const fin = goodsFinal(g); const mg = fin - (p ? num(p.cost) * num(g.qty) : 0); return { g, p, fin, mg }; });
+    const by = {}; rows.forEach((r) => { const k = r.g.assist || '(어시스트 없음)'; by[k] ||= { fin: 0, mg: 0, n: 0 }; by[k].fin += r.fin; by[k].mg += r.mg; by[k].n += num(r.g.qty); });
+    body = `<div class="row"><button class="ghost" id="sPrev">◀</button><b class="monthLbl">${y}년 ${m}월</b><button class="ghost" id="sNext">▶</button></div>
+      <div class="kpis"><div class="kpi"><span>판매 금액</span><b>${W(rows.reduce((s, r) => s + r.fin, 0))}원</b></div><div class="kpi"><span>판매 마진</span><b class="accent">${W(rows.reduce((s, r) => s + r.mg, 0))}원</b></div><div class="kpi"><span>판매 수량</span><b>${rows.reduce((s, r) => s + num(r.g.qty), 0)}개</b></div></div>
+      <h3>어시스트별</h3><div class="tbl"><table class="mt incT"><tr><th>어시스트</th><th class="r">수량</th><th class="r">판매 금액</th><th class="r">마진</th></tr>
+      ${Object.entries(by).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="r">${v.n}</td><td class="r">${W(v.fin)}</td><td class="r accent">${W(v.mg)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">이 달 판매가 없어요.</td></tr>'}</table></div>
+      <h3>판매 내역 <small class="muted">일계표에서 입력한 내용이에요</small></h3><div class="tbl"><table class="mt incT"><tr><th>날짜</th><th>제품</th><th>어시스트</th><th>직원</th><th class="r">수량</th><th class="r">최종금액</th><th class="r">마진</th><th>결제</th></tr>
+      ${rows.map((r) => `<tr><td>${r.g.date}</td><td>${esc(r.g.product)}${r.p ? '' : ' <small class="warnTxt">(품목에 없음)</small>'}</td><td>${esc(r.g.assist)}</td><td>${r.g.staff ? '✓' : ''}</td><td class="r">${num(r.g.qty)}</td><td class="r">${W(r.fin)}</td><td class="r">${W(r.mg)}</td><td>${esc(r.g.pay)}</td></tr>`).join('')}</table></div>`;
+  }
+  shell(`<div class="row between"><div><p class="eyebrow">ORAL CARE</p><h1>구강용품</h1></div></div>
+    <div class="chips">${tabs.map(([k, l]) => `<button data-gt="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <section class="card">${body}</section>`);
+  $app.querySelectorAll('[data-gt]').forEach((b) => b.onclick = () => go('goods', { tab: b.dataset.gt, month }));
+  const shiftM = (k) => { const [yy, mm] = month.split('-').map(Number); const d = new Date(yy, mm - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  document.getElementById('sPrev')?.addEventListener('click', () => go('goods', { tab, month: shiftM(-1) }));
+  document.getElementById('sNext')?.addEventListener('click', () => go('goods', { tab, month: shiftM(1) }));
+  document.getElementById('pNew')?.addEventListener('click', () => productModal(null));
+  $app.querySelectorAll('[data-pe]').forEach((b) => b.onclick = () => productModal(products.find((p) => p.id === b.dataset.pe)));
+  document.getElementById('bProd')?.addEventListener('change', (e) => { const p = products.find((x) => x.id === e.target.value); document.getElementById('bCost').value = p ? num(p.cost) : ''; });
+  document.getElementById('bAdd')?.addEventListener('click', async () => {
+    const p = products.find((x) => x.id === val('bProd')); if (!p) return toast('먼저 품목을 등록해 주세요');
+    const qty = num(val('bQty')); if (!qty) return toast('수량을 넣어 주세요');
+    await addDoc(collection(db, 'purchases'), { date: val('bDate'), productId: p.id, name: p.name, vendor: p.vendor || '', qty, cost: num(val('bCost')), memo: val('bMemo'), at: serverTimestamp() });
+    toast('매입을 등록했어요'); go('goods', { tab: 'buy' });
+  });
+  $app.querySelectorAll('[data-bdel]').forEach((b) => b.onclick = async () => { if (!confirm('이 매입 기록을 지울까요?')) return; await deleteDoc(doc(db, 'purchases', b.dataset.bdel)); go('goods', { tab: 'buy' }); });
+}
+
+function productModal(p) {
+  const v = p || { vendor: '', code: '', name: '', cost: '', price: '', staffPrice: '', memo: '', baseStock: '' };
+  const w = document.createElement('div'); w.className = 'modal';
+  const f = (k, l, n) => `<label>${l}<input id="pm_${k}" value="${esc(n ? (num(v[k]) ? comma(num(v[k])) : '') : v[k] ?? '')}" ${n ? 'inputmode="numeric"' : ''}></label>`;
+  w.innerHTML = `<div class="modalBox form"><h2>${p ? '제품 수정' : '새 제품 추가'}</h2>
+    ${f('vendor', '거래처')}<div class="two">${f('code', '제품코드')}${f('name', '제품명 *')}</div>
+    <div class="three">${f('cost', '구매단가 (원)', 1)}${f('price', '판매단가 (원)', 1)}${f('staffPrice', '직원단가 (원)', 1)}</div>
+    <div class="incFormula sm"><div><span>판매마진</span><b id="pm_m"></b></div><div><span>마진율</span><b id="pm_r"></b></div></div>
+    ${f('baseStock', '처음 재고 (지금 가지고 있는 수량)', 1)}${f('memo', '메모')}
+    <div class="row"><button class="primary" id="pm_save">${p ? '저장' : '제품 추가'}</button><button class="ghost" id="pm_x">취소</button>${p ? '<button class="ghost danger" id="pm_del">삭제</button>' : ''}</div></div>`;
+  document.body.appendChild(w);
+  const g = (k) => document.getElementById('pm_' + k);
+  const calc = () => { const mg = num(g('price').value) - num(g('cost').value); g('m').textContent = comma(mg) + '원'; g('r').textContent = num(g('price').value) ? Math.round(mg / num(g('price').value) * 100) + '%' : '0%'; };
+  ['cost', 'price'].forEach((k) => g(k).oninput = calc); calc();
+  g('x').onclick = () => w.remove();
+  g('save').onclick = async () => {
+    const data = { vendor: g('vendor').value.trim(), code: g('code').value.trim(), name: g('name').value.trim(), cost: num(g('cost').value), price: num(g('price').value), staffPrice: num(g('staffPrice').value), baseStock: num(g('baseStock').value), memo: g('memo').value.trim(), updatedAt: serverTimestamp() };
+    if (!data.name) return toast('제품명을 넣어 주세요');
+    if (p) await setDoc(doc(db, 'products', p.id), data); else await addDoc(collection(db, 'products'), data);
+    w.remove(); productCache = null; toast('저장했어요'); go('goods', { tab: 'list' });
+  };
+  g('del')?.addEventListener('click', async () => { if (!confirm(`${p.name}을(를) 삭제할까요?`)) return; await deleteDoc(doc(db, 'products', p.id)); w.remove(); productCache = null; go('goods', { tab: 'list' }); });
+}
+
 // ---------- 목표매출·인센티브 (관리자) ----------
 // incentive/{YYYY-MM}: { ratio, clinicTeams:[팀], clinicRate, leaderMax, units:[{name, rate}], doctorRates:{uid:%} }
 const INC_UNITS = ['경영실장', '총괄실장', '진료지원팀', '고객지원팀'];
-const INC_DEFAULT = { ratio: 20, clinicRate: 15, clinicTeams: null, leaderMax: 70, units: null, doctorRates: {} };
+const INC_DEFAULT = { ratio: 20, clinicRate: 15, clinicTeams: null, leaderMax: 70, units: null, doctorRates: {}, goodsRate: 0 };
 async function renderIncentive() {
   const now = new Date();
   const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
@@ -929,6 +1045,8 @@ async function renderIncentive() {
         <div class="rateRow main"><b>└ 팀장 최대 몫</b><input type="range" id="lmax" min="30" max="100" step="5" value="${st.leaderMax}"><span class="nb"><b id="lmaxV">${st.leaderMax}%</b></span>
           <span class="muted sm">팀장이 최대 이만큼 가져가고, 나머지는 팀원에게 팀장 재량으로 나눠요</span><span></span></div>
       </div>
+      <h4 class="subH">구강용품 판매</h4>
+      <div class="rateList" id="goodsRate">${rateRow('__goods', '구강용품', st.goodsRate, 100, `판매 마진(판매가 − 구매가)의 <b class="rv" data-k="__goods">${st.goodsRate}</b>%를 판매한 어시스트에게`)}</div>
       <h4 class="subH">비진료부 (간접 지원) — 전체 초과 매출 기준</h4>
       <div class="rateList" id="unitGrid"></div>
       <div class="row"><input id="unitNew" placeholder="항목 이름 (예: 데스크)" style="max-width:220px"><button class="sm" id="unitAdd">+ 항목 추가</button></div>
@@ -944,6 +1062,7 @@ async function renderIncentive() {
   const setRate = (k, v) => {
     v = Math.max(0, Number(v) || 0);
     if (k === '__clinic') st.clinicRate = v;
+    else if (k === '__goods') st.goodsRate = v;
     else if (k.startsWith('u:')) st.units[+k.slice(2)].rate = v;
     else if (k.startsWith('d:')) st.doctorRates[k.slice(2)] = v;
     else if (k.startsWith('dr:')) { st.doctorRatios[k.slice(3)] = Math.max(1, v); drawDoc(); }
@@ -974,7 +1093,7 @@ async function renderIncentive() {
     doctors.forEach((p) => { const e = document.querySelector(`[data-dt="${p.uid}"]`); const r = st.doctorRatios[p.uid] ?? st.ratio; if (e) e.textContent = r ? comma(monthly(p.uid) / (r / 100)) : '-'; });
   }
   draw(); drawUnits();
-  bindRates(document.getElementById('clinicRate'));
+  bindRates(document.getElementById('clinicRate')); bindRates(document.getElementById('goodsRate'));
   const rr = document.getElementById('ratio'), rn = document.getElementById('ratioN');
   rr.oninput = () => { st.ratio = Number(rr.value); rn.value = st.ratio; draw(); };
   rn.onchange = () => { st.ratio = Math.min(80, Math.max(1, Number(rn.value) || 20)); rr.value = st.ratio; rn.value = st.ratio; draw(); };

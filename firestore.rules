@@ -101,6 +101,13 @@ service cloud.firestore {
     match /daily/{id} {
       allow read, write: if isAdmin();
     }
+    // 구강용품 품목·매입: 관리자만
+    match /products/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /purchases/{id} {
+      allow read, write: if isAdmin();
+    }
     // 목표매출·인센티브 설정: 관리자만
     match /incentive/{id} {
       allow read, write: if isAdmin();
