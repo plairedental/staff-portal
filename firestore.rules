@@ -41,6 +41,27 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // 연차 신청: 본인·승인자(관리자, 총괄실장)·같은 팀 팀장만 보기
+    match /leaves/{id} {
+      allow read: if signedIn() && (
+        resource.data.uid == request.auth.uid
+        || hasRole(['admin', 'chief'])
+        || (hasRole(['leader']) && resource.data.team == me().team)
+      );
+      allow create: if active() && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == '대기'
+        && request.resource.data.team == me().get('team', '');
+      allow update: if hasRole(['admin', 'chief']);
+      allow delete: if hasRole(['admin', 'chief'])
+        || (active() && resource.data.uid == request.auth.uid && resource.data.status == '대기');
+    }
+
+    // 근무표: 승인된 직원 모두 보기, 관리자·총괄실장 수정
+    match /schedules/{month} {
+      allow read: if active();
+      allow write: if hasRole(['admin', 'chief']);
+    }
+
     // 매뉴얼: 승인된 직원 모두 읽기, 관리자·총괄실장 수정
     match /manuals/{id} {
       allow read: if active();

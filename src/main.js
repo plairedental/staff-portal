@@ -161,7 +161,7 @@ function renderWaiting() {
 
 // ---------- 화면 틀 ----------
 function shell(content) {
-  const tabs = [['my', '내 정보', '👤'], ...(can.hr() ? [['hr', '인사관리', '👥']] : []), ['manual', '매뉴얼', '📘'], ...(me.role === 'admin' ? [['settings', '화면 설정', '🎨']] : [])];
+  const tabs = [['my', '내 정보', '👤'], ...(can.hr() ? [['hr', '인사관리', '👥']] : []), ['work', '연차·근무', '📅'], ['manual', '매뉴얼', '📘'], ...(me.role === 'admin' ? [['settings', '화면 설정', '🎨']] : [])];
   $app.innerHTML = `
     <header>
       ${brand('small')}
@@ -179,6 +179,7 @@ async function render() {
   try {
     if (view === 'hr' && can.hr()) return await renderHr();
     if (view === 'manual') return await renderManual();
+    if (view === 'work') return await renderWork();
     if (view === 'settings' && me.role === 'admin') return renderSettings();
     view = 'my'; return await renderMy();
   } catch (e) {
@@ -324,6 +325,7 @@ async function renderPerson(uid) {
       <label>이메일<input value="${esc(p.email)}" disabled></label>
       ${f('hireDate', '입사일', p.hireDate, 'date')}
       <label>재직상태<select id="work">${WORK.map((w) => `<option ${(p.work || '재직') === w ? 'selected' : ''}>${w}</option>`).join('')}</select></label>
+      ${f('annualAdjust', '연차 조정 (일, 예: 2 또는 -1)', p.annualAdjust ?? '', 'number')}
     </section>
     <section class="card form">
       <h2>급여 <span class="muted sm">(본인과 관리자만 볼 수 있어요)</span></h2>
@@ -338,7 +340,8 @@ async function renderPerson(uid) {
     await updateDoc(doc(db, 'users', uid), {
       name: val('name'), job: val('job'), dept: val('dept'), team: val('team'),
       role: document.getElementById('role').value, phone: val('phone'),
-      hireDate: val('hireDate'), work: document.getElementById('work').value
+      hireDate: val('hireDate'), work: document.getElementById('work').value,
+      annualAdjust: val('annualAdjust') === '' ? 0 : Number(val('annualAdjust'))
     });
     const m = val('monthly');
     await setDoc(doc(db, 'salaries', uid), { monthly: m === '' ? null : Number(m), note: val('note'), updatedAt: serverTimestamp() });
@@ -411,6 +414,224 @@ async function renderManualEdit(id) {
     if (id) await setDoc(doc(db, 'manuals', id), data);
     else { const r = await addDoc(collection(db, 'manuals'), data); id = r.id; }
     toast('저장했어요'); go('manual', { id });
+  };
+}
+
+// ---------- 연차·근무표 ----------
+const pad = (n) => String(n).padStart(2, '0');
+const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseD = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const LEAVE_TYPES = { '연차': 1, '오전반차': 0.5, '오후반차': 0.5 };
+const STAMPS = [['', '근무'], ['휴무', '휴무'], ['오전', '오전'], ['오후', '오후'], ['야간', '야간'], ['연차', '연차'], ['반차', '반차']];
+const canApprove = () => ['admin', 'chief'].includes(me?.role);
+
+// 근로기준법 기준 연차 (입사일 기준, 출근율 80% 이상 가정)
+function leavePeriod(hireDate, today = new Date()) {
+  if (!hireDate) return null;
+  const h = parseD(hireDate);
+  let years = today.getFullYear() - h.getFullYear();
+  const anniv = new Date(today.getFullYear(), h.getMonth(), h.getDate());
+  if (today < anniv) years--;
+  if (years < 1) {
+    let months = (today.getFullYear() - h.getFullYear()) * 12 + today.getMonth() - h.getMonth();
+    if (today.getDate() < h.getDate()) months--;
+    const end = new Date(h); end.setFullYear(end.getFullYear() + 1);
+    return { start: hireDate, end: ymd(end), days: Math.max(0, Math.min(11, months)), label: '입사 1년 미만 (1개월 개근마다 1일)' };
+  }
+  const start = new Date(h); start.setFullYear(h.getFullYear() + years);
+  const end = new Date(start); end.setFullYear(end.getFullYear() + 1);
+  return { start: ymd(start), end: ymd(end), days: Math.min(25, 15 + Math.floor((years - 1) / 2)), label: `근속 ${years}년차` };
+}
+function balanceOf(user, leaves) {
+  const p = leavePeriod(user.hireDate);
+  const adj = Number(user.annualAdjust || 0);
+  if (!p) return { total: adj, used: 0, left: adj, period: null };
+  const used = leaves.filter((l) => l.uid === user.uid && l.status === '승인' && l.start >= p.start && l.start < p.end)
+    .reduce((s, l) => s + Number(l.days || 0), 0);
+  return { total: p.days + adj, used, left: p.days + adj - used, period: p };
+}
+function countDays(start, end, type) {
+  if (LEAVE_TYPES[type] === 0.5) return 0.5;
+  let n = 0;
+  for (let d = parseD(start); d <= parseD(end); d.setDate(d.getDate() + 1)) if (d.getDay() !== 0) n++;
+  return n;
+}
+async function loadLeaves() {
+  const col = collection(db, 'leaves');
+  let q;
+  if (canApprove()) q = col;
+  else if (me.role === 'leader') q = query(col, where('team', '==', me.team || ''));
+  else q = query(col, where('uid', '==', me.uid));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.start.localeCompare(a.start));
+}
+// 승인된 연차를 근무표에 반영 (code가 null이면 지움)
+async function stampLeave(l, code) {
+  const byMonth = {};
+  const days = LEAVE_TYPES[l.type] === 0.5 ? [l.start] : [];
+  if (!days.length) for (let d = parseD(l.start); d <= parseD(l.end); d.setDate(d.getDate() + 1)) if (d.getDay() !== 0) days.push(ymd(d));
+  days.forEach((s) => { (byMonth[s.slice(0, 7)] ||= []).push(Number(s.slice(8))); });
+  for (const [month, ds] of Object.entries(byMonth)) {
+    const ref = doc(db, 'schedules', month);
+    const snap = await getDoc(ref);
+    const data = snap.exists() ? snap.data() : { people: [], cells: {} };
+    data.cells ||= {}; data.cells[l.uid] ||= {};
+    ds.forEach((d) => { if (code) data.cells[l.uid][d] = code; else delete data.cells[l.uid][d]; });
+    if (!data.people.some((p) => p.uid === l.uid)) data.people.push({ uid: l.uid, name: l.name, team: l.team || '' });
+    await setDoc(ref, data);
+  }
+}
+
+async function renderWork() {
+  const tab = sub?.tab || 'schedule';
+  const head = `<h1>연차·근무</h1>
+    <div class="chips seg"><button data-t="schedule" class="${tab === 'schedule' ? 'on' : ''}">근무표</button><button data-t="leave" class="${tab === 'leave' ? 'on' : ''}">연차</button></div>`;
+  const bindTabs = () => $app.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => go('work', { tab: b.dataset.t }));
+  if (tab === 'leave') return renderLeave(head, bindTabs);
+  return renderSchedule(head, bindTabs);
+}
+
+async function renderLeave(head, bindTabs) {
+  const leaves = await loadLeaves();
+  const mine = leaves.filter((l) => l.uid === me.uid);
+  const bal = balanceOf(me, mine);
+  const pending = leaves.filter((l) => l.status === '대기' && l.uid !== me.uid);
+  const today = ymd(new Date());
+  let people = [];
+  if (canApprove()) people = (await loadPeople()).filter((p) => p.status === 'active' && (p.work || '재직') !== '퇴사');
+
+  const row = (l, actions = '') => `
+    <div class="lv">
+      <div><b>${esc(l.name)}</b> <span class="muted sm">${esc(l.type)} · ${l.start}${l.end && l.end !== l.start ? ' ~ ' + l.end : ''} (${l.days}일)</span>
+        ${l.reason ? `<div class="sm muted">${esc(l.reason)}</div>` : ''}</div>
+      <div class="row"><span class="tag ${l.status === '승인' ? '' : 'gray'}">${l.status}</span>${actions}</div>
+    </div>`;
+
+  shell(`${head}
+    <section class="card">
+      <h2>내 연차</h2>
+      ${bal.period ? `<div class="stats"><div><b>${bal.total}</b><span>발생</span></div><div><b>${bal.used}</b><span>사용</span></div><div><b>${bal.left}</b><span>남음</span></div></div>
+        <p class="muted sm">${bal.period.label} · 기간 ${bal.period.start} ~ ${bal.period.end}</p>`
+        : '<p class="muted">입사일이 등록되지 않아 연차를 계산할 수 없어요. 관리자에게 입사일 등록을 요청해 주세요.</p>'}
+    </section>
+    <section class="card form">
+      <h2>연차 신청</h2>
+      <label>종류<select id="lt">${Object.keys(LEAVE_TYPES).map((t) => `<option>${t}</option>`).join('')}</select></label>
+      <div class="two"><label>시작일<input type="date" id="ls" value="${today}"></label><label id="leWrap">종료일<input type="date" id="le" value="${today}"></label></div>
+      <label>사유 (선택)<input id="lr" placeholder="예: 개인 사정"></label>
+      <p class="sm" id="lcount"></p>
+      <button id="lsend" class="primary">신청하기</button>
+    </section>
+    ${canApprove() && pending.length ? `<section class="card warn"><h2>승인 대기 (${pending.length})</h2>
+      ${pending.map((l) => row(l, `<button data-ok="${l.id}" class="primary sm">승인</button><button data-no="${l.id}" class="ghost sm">반려</button>`)).join('')}</section>` : ''}
+    ${me.role === 'leader' && pending.length ? `<section class="card"><h2>우리 팀 신청 (${pending.length})</h2>${pending.map((l) => row(l)).join('')}
+      <p class="muted sm">승인은 관리자·총괄실장이 해요.</p></section>` : ''}
+    ${canApprove() ? `<section class="card"><h2>직원별 연차</h2>
+      <div class="tbl"><table><tr><th>이름</th><th>발생</th><th>사용</th><th>남음</th></tr>
+      ${people.map((p) => { const b = balanceOf(p, leaves); return `<tr><td>${esc(p.name)}</td><td>${b.period ? b.total : '입사일 없음'}</td><td>${b.used}</td><td><b>${b.left}</b></td></tr>`; }).join('')}
+      </table></div><p class="muted sm">입사일 기준, 출근율 80% 이상을 가정한 계산이에요. 조정은 인사관리 → 직원 → "연차 조정"에서 해요.</p></section>` : ''}
+    <section class="card"><h2>${canApprove() ? '전체 신청 내역' : me.role === 'leader' ? '우리 팀 신청 내역' : '내 신청 내역'}</h2>
+      ${leaves.filter((l) => l.status !== '대기' || l.uid === me.uid || !canApprove()).slice(0, 50).map((l) => row(l,
+        (l.uid === me.uid && l.status === '대기') ? `<button data-cancel="${l.id}" class="ghost sm">취소</button>`
+        : (canApprove() && l.status === '승인') ? `<button data-undo="${l.id}" class="ghost sm danger">승인 취소</button>` : '')).join('') || '<p class="muted">내역이 없어요.</p>'}
+    </section>`);
+  bindTabs();
+
+  const upd = () => {
+    const t = document.getElementById('lt').value;
+    const half = LEAVE_TYPES[t] === 0.5;
+    document.getElementById('leWrap').style.display = half ? 'none' : '';
+    const s = val('ls'), e = half ? s : val('le');
+    document.getElementById('lcount').textContent = s && e && e >= s ? `사용 일수: ${countDays(s, e, t)}일 (일요일 제외)` : '종료일을 확인해 주세요.';
+  };
+  ['lt', 'ls', 'le'].forEach((id) => document.getElementById(id).oninput = upd); upd();
+  document.getElementById('lsend').onclick = async () => {
+    const type = val('lt'), start = val('ls'), end = LEAVE_TYPES[type] === 0.5 ? start : val('le');
+    if (!start || end < start) return toast('날짜를 확인해 주세요');
+    await addDoc(collection(db, 'leaves'), {
+      uid: me.uid, name: me.name, team: me.team || '', type, start, end, days: countDays(start, end, type),
+      reason: val('lr'), status: '대기', createdAt: serverTimestamp()
+    });
+    toast('신청했어요'); go('work', { tab: 'leave' });
+  };
+  const find = (id) => leaves.find((l) => l.id === id);
+  $app.querySelectorAll('[data-ok]').forEach((b) => b.onclick = async () => {
+    const l = find(b.dataset.ok);
+    await updateDoc(doc(db, 'leaves', l.id), { status: '승인', decidedBy: me.name });
+    await stampLeave(l, LEAVE_TYPES[l.type] === 0.5 ? '반차' : '연차');
+    toast('승인하고 근무표에 반영했어요'); go('work', { tab: 'leave' });
+  });
+  $app.querySelectorAll('[data-no]').forEach((b) => b.onclick = async () => {
+    await updateDoc(doc(db, 'leaves', b.dataset.no), { status: '반려', decidedBy: me.name });
+    toast('반려했어요'); go('work', { tab: 'leave' });
+  });
+  $app.querySelectorAll('[data-undo]').forEach((b) => b.onclick = async () => {
+    if (!confirm('승인을 취소할까요? 근무표에서도 지워져요.')) return;
+    const l = find(b.dataset.undo);
+    await updateDoc(doc(db, 'leaves', l.id), { status: '반려', decidedBy: me.name });
+    await stampLeave(l, null);
+    toast('승인을 취소했어요'); go('work', { tab: 'leave' });
+  });
+  $app.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = async () => {
+    if (!confirm('신청을 취소할까요?')) return;
+    await deleteDoc(doc(db, 'leaves', b.dataset.cancel)); toast('취소했어요'); go('work', { tab: 'leave' });
+  });
+}
+
+async function renderSchedule(head, bindTabs) {
+  const now = new Date();
+  const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const [y, m] = month.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  const ref = doc(db, 'schedules', month);
+  const snap = await getDoc(ref);
+  const data = snap.exists() ? snap.data() : { people: [], cells: {} };
+  data.cells ||= {}; data.people ||= [];
+  const editor = canApprove();
+  if (editor) {   // 현재 재직자로 명단 맞추기
+    const act = (await loadPeople()).filter((p) => p.status === 'active' && (p.work || '재직') !== '퇴사');
+    act.forEach((p) => { const o = data.people.find((x) => x.uid === p.uid); if (o) { o.name = p.name; o.team = p.team || ''; } else data.people.push({ uid: p.uid, name: p.name, team: p.team || '' }); });
+    data.people = data.people.filter((x) => act.some((p) => p.uid === x.uid) || Object.keys(data.cells[x.uid] || {}).length);
+  }
+  data.people.sort((a, b) => (a.team || '').localeCompare(b.team || '', 'ko') || a.name.localeCompare(b.name, 'ko'));
+  const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  const DOW = '일월화수목금토';
+  let stamp = sub?.stamp ?? '휴무';
+  let dirty = false;
+
+  const cellHtml = (uid, d) => { const c = data.cells[uid]?.[d] || ''; return `<td data-u="${uid}" data-d="${d}" class="c ${c ? 'k-' + c : ''} ${new Date(y, m - 1, d).getDay() === 0 ? 'sun' : ''}">${c}</td>`; };
+  shell(`${head}
+    <div class="row between month"><button id="prev" class="ghost">◀</button><b>${y}년 ${m}월</b><button id="next" class="ghost">▶</button></div>
+    ${editor ? `<div class="chips stamps">${STAMPS.map(([k, t]) => `<button data-s="${k}" class="${stamp === k ? 'on' : ''} ${k ? 'k-' + k : ''}">${t}</button>`).join('')}</div>
+      <p class="muted sm">도장을 고르고 칸을 누르세요. 빈칸은 정상 근무예요.</p>` : ''}
+    <div class="sched"><table>
+      <tr><th class="nm">이름</th>${Array.from({ length: last }, (_, i) => { const dw = new Date(y, m - 1, i + 1).getDay(); return `<th class="${dw === 0 ? 'sun' : dw === 6 ? 'sat' : ''}">${i + 1}<br><small>${DOW[dw]}</small></th>`; }).join('')}</tr>
+      ${data.people.map((p) => `<tr class="${p.uid === me.uid ? 'mine' : ''}"><th class="nm">${esc(p.name)}${p.team ? `<small>${esc(p.team)}</small>` : ''}</th>${Array.from({ length: last }, (_, i) => cellHtml(p.uid, i + 1)).join('')}</tr>`).join('')
+        || `<tr><td class="muted" colspan="${last + 1}">아직 근무표가 없어요.</td></tr>`}
+    </table></div>
+    ${editor ? '<div class="row"><button id="saveSched" class="primary">근무표 저장</button><span class="muted sm" id="dirty"></span></div>' : ''}`);
+  bindTabs();
+  const leave = (fn) => () => { if (dirty && !confirm('저장하지 않은 변경이 있어요. 이동할까요?')) return; fn(); };
+  document.getElementById('prev').onclick = leave(() => go('work', { tab: 'schedule', month: shift(-1), stamp }));
+  document.getElementById('next').onclick = leave(() => go('work', { tab: 'schedule', month: shift(1), stamp }));
+  $app.querySelectorAll('[data-t]').forEach((b) => b.onclick = leave(() => go('work', { tab: b.dataset.t })));
+  if (!editor) return;
+  $app.querySelectorAll('.stamps button').forEach((b) => b.onclick = () => {
+    stamp = b.dataset.s; $app.querySelectorAll('.stamps button').forEach((x) => x.classList.toggle('on', x === b));
+  });
+  $app.querySelectorAll('td.c').forEach((td) => td.onclick = () => {
+    const { u, d } = td.dataset;
+    data.cells[u] ||= {};
+    const cur = data.cells[u][d] || '';
+    const next = cur === stamp ? '' : stamp;   // 같은 도장을 한 번 더 누르면 지워짐
+    if (next) data.cells[u][d] = next; else delete data.cells[u][d];
+    td.outerHTML = cellHtml(u, Number(d));
+    dirty = true; document.getElementById('dirty').textContent = '저장 안 된 변경 있음';
+    const nt = $app.querySelector(`td[data-u="${u}"][data-d="${d}"]`); nt.onclick = td.onclick;
+  });
+  document.getElementById('saveSched').onclick = async () => {
+    await setDoc(ref, { people: data.people, cells: data.cells, updatedAt: serverTimestamp(), updatedBy: me.name });
+    dirty = false; toast('근무표를 저장했어요'); document.getElementById('dirty').textContent = '';
   };
 }
 

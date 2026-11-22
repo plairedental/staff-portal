@@ -95,3 +95,36 @@ dl.info dt { color: var(--muted); } dl.info dd { margin: 0; }
 .preview { border: 1px dashed var(--line); border-radius: 10px; padding: 1rem; }
 .preview .brand { color: var(--c); }
 .preview .primary { background: var(--c); border-color: var(--c); }
+
+/* 연차·근무 */
+.seg { margin: -.4rem 0 1rem; }
+.stats { display: flex; gap: .6rem; margin-bottom: .6rem; }
+.stats div { flex: 1; text-align: center; background: var(--c2); border-radius: 10px; padding: .7rem .3rem; }
+.stats b { display: block; font-size: 1.5rem; color: var(--c); }
+.stats span { font-size: .85rem; color: var(--muted); }
+.lv { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .7rem 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.lv:first-of-type { border-top: none; }
+.lv .tag { margin-left: 0; }
+.tbl { overflow-x: auto; }
+.tbl table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+.tbl th, .tbl td { padding: .45rem .5rem; border-bottom: 1px solid var(--line); text-align: center; }
+.tbl th:first-child, .tbl td:first-child { text-align: left; }
+.month { margin-bottom: .6rem; }
+.month b { font-size: 1.1rem; }
+.stamps { margin-bottom: .3rem; }
+.sched { overflow-x: auto; background: #fff; border: 1px solid var(--line); border-radius: 12px; margin: .6rem 0 1rem; }
+.sched table { border-collapse: separate; border-spacing: 0; font-size: .8rem; }
+.sched th, .sched td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: center; min-width: 2.3rem; height: 2.4rem; padding: 0 .15rem; white-space: nowrap; }
+.sched th small { color: var(--muted); font-weight: 400; }
+.sched .nm { position: sticky; left: 0; background: #fff; z-index: 1; min-width: 5.2rem; text-align: left; padding: 0 .5rem; }
+.sched .nm small { display: block; color: var(--muted); font-weight: 400; font-size: .7rem; }
+.sched tr.mine .nm { color: var(--c); }
+.sched td.c { cursor: pointer; }
+.sched .sun { color: #c0392b; background: #fdf3f2; }
+.sched th.sat { color: #2b6cb0; }
+.k-휴무 { background: #e9ecef !important; color: #555 !important; }
+.k-오전, .k-오후 { background: #e6f0fb !important; color: #2b6cb0 !important; }
+.k-야간 { background: #efe9fb !important; color: #6b46c1 !important; }
+.k-연차 { background: #fdecef !important; color: #b83280 !important; }
+.k-반차 { background: #fff4e5 !important; color: #c05621 !important; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
