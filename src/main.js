@@ -177,6 +177,8 @@ function categories() {
   return [
     { key: 'biz', label: '경영·통계', icon: '📊', show: () => me.role === 'admin', items: [
     ], admin: [
+      ['dash', '대시보드', '📊', '이번 달 목표 대비 성과와 인센티브를 한눈에 봐요.', () => me.role === 'admin'],
+      ['daily', '일계표', '🧮', '날짜별 수입·지출·구강용품 판매와 마감을 기록해요.', () => me.role === 'admin'],
       ['incentive', '목표매출·인센티브', '🎯', '인건비 비율로 목표 매출을 정하고 팀별 인센티브를 계산해요.', () => me.role === 'admin']
     ] },
     { key: 'hr', label: '인사관리', icon: '👥', items: [
@@ -262,7 +264,7 @@ function shell(content) {
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
-      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive'].includes(key) ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'daily'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { const c = cats.find((x) => x.key === b.dataset.cat); goKey((c.items[0] || c.admin[0])[0]); });
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
@@ -293,6 +295,8 @@ async function render() {
     if (view === 'work') return await renderWork();
     if (view === 'settings' && me.role === 'admin') return renderSettings();
     if (view === 'incentive' && me.role === 'admin') return await renderIncentive();
+    if (view === 'dash' && me.role === 'admin') return await renderDash();
+    if (view === 'daily' && me.role === 'admin') return await renderDaily();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
     if (view === 'docs' && me.role === 'admin') return await renderDocs();
     if (view === 'docreq') return await renderDocReq();
@@ -614,6 +618,241 @@ async function renderPerson(uid) {
     await deleteDoc(doc(db, 'salaries', uid)).catch(() => {});
     await deleteDoc(doc(db, 'users', uid));
     toast('삭제했어요'); go('hr');
+  });
+}
+
+// ---------- 일계표 · 대시보드 (관리자·총괄실장) ----------
+// daily/{YYYY-MM-DD}: { month, income:[], goods:[], expense:[], close:{prevCash,toDoc,memo}, dw:{card,cash,other,receipt,byStaff:{},byDoctor:{},patients} }
+const PAYWAYS = ['현금', '카드', '계좌이체'];
+const dsum = (arr, f) => (arr || []).reduce((s, x) => s + num(typeof f === 'function' ? f(x) : x[f]), 0);
+const goodsFinal = (g) => Math.round(num(g.price) * (num(g.qty) || 0) * (1 - num(g.disc) / 100));
+function dailyTotals(d) {
+  d ||= {};
+  const inc = { cash: dsum(d.income, 'cash'), transfer: dsum(d.income, 'transfer'), card: dsum(d.income, 'card') };
+  const gd = { cash: 0, transfer: 0, card: 0 };
+  (d.goods || []).forEach((g) => { const k = g.pay === '카드' ? 'card' : g.pay === '계좌이체' ? 'transfer' : 'cash'; gd[k] += goodsFinal(g); });
+  const dw = d.dw || {};
+  const chart = num(dw.card) + num(dw.cash) + num(dw.other) + num(dw.receipt);
+  const manual = inc.cash + inc.transfer + inc.card + gd.cash + gd.transfer + gd.card;
+  const cashIn = inc.cash + gd.cash + num(dw.cash);
+  const cashOut = dsum(d.expense, 'amount');
+  const close = d.close || {};
+  return { inc, gd, chart, manual, total: chart + manual, cashIn, cashOut, goods: gd.cash + gd.transfer + gd.card,
+    endCash: num(close.prevCash) + cashIn - cashOut - num(close.toDoc) };
+}
+
+async function renderDaily() {
+  const date = sub?.date || today();
+  const month = date.slice(0, 7);
+  const [y, m] = month.split('-').map(Number);
+  const [ms, ds, people] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'daily', date)), loadPeople()]);
+  const has = {}; ms.docs.forEach((x) => { has[x.id] = dailyTotals(x.data()).total; });
+  const d = ds.exists() ? JSON.parse(JSON.stringify(ds.data())) : {};
+  const blank = { income: () => ({ chart: '', name: '', cash: 0, transfer: 0, card: 0, memo: '' }), goods: () => ({ chart: '', name: '', assist: '', product: '', staff: false, price: 0, qty: 1, disc: 0, pay: '', memo: '' }), expense: () => ({ item: '', amount: 0, memo: '' }) };
+  ['income', 'goods', 'expense'].forEach((k) => { d[k] ||= []; while (d[k].length < 3) d[k].push(blank[k]()); });
+  d.close ||= {}; d.dw ||= {};
+  // 전일 시재: 비어 있으면 바로 전 기록일의 당일 시재
+  if (d.close.prevCash === undefined) {
+    const prev = ms.docs.map((x) => x.id).filter((k) => k < date).sort().pop();
+    if (prev) d.close.prevCash = dailyTotals(ms.docs.find((x) => x.id === prev).data()).endCash;
+  }
+  const staffNames = people.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사').map((p) => p.name);
+  const first = new Date(y, m - 1, 1).getDay(), days = new Date(y, m, 0).getDate();
+  const dayCell = (i) => { const k = `${month}-${pad(i)}`; return `<button data-day="${k}" class="${k === date ? 'on' : ''} ${has[k] !== undefined ? 'has' : ''} ${k === today() ? 'today' : ''}">${i}</button>`; };
+  const wk = ['일', '월', '화', '수', '목', '금', '토'][new Date(date).getDay()];
+  const inp = (sec, i, k, cls = '', ph = '') => `<input class="dIn ${cls}" data-s="${sec}" data-i="${i}" data-k="${k}" value="${esc(cls.includes('n') ? (num(d[sec][i][k]) ? comma(num(d[sec][i][k])) : '') : d[sec][i][k] ?? '')}" placeholder="${ph}" ${cls.includes('n') ? 'inputmode="numeric"' : ''}>`;
+  shell(`
+    <div class="row between"><div><p class="eyebrow">DAILY REPORT</p><h1>일계표</h1></div>
+      <div class="row"><button class="ghost" id="dPrev">◀</button><b class="monthLbl">${date} (${wk})</b><button class="ghost" id="dNext">▶</button><button class="primary" id="dSave">💾 저장</button></div></div>
+    <div class="dailyGrid">
+      <aside class="card dCal"><div class="row between"><button class="ghost sm" id="cPrev">◀</button><b>${y}년 ${m}월</b><button class="ghost sm" id="cNext">▶</button></div>
+        <div class="calGrid">${['일', '월', '화', '수', '목', '금', '토'].map((w) => `<span>${w}</span>`).join('')}${'<span></span>'.repeat(first)}${Array.from({ length: days }, (_, i) => dayCell(i + 1)).join('')}</div>
+        <p class="muted sm"><span class="dot has"></span> 입력된 날 · 이번 달 합계 <b>${comma(Object.values(has).reduce((a, b) => a + b, 0))}</b>원</p></aside>
+      <div>
+        <section class="card"><h3>수입 입력 <small class="muted">환불은 −로 적어요 (예: -10000)</small></h3>
+          <div class="tbl"><table class="mt dT" id="tIncome"><tr><th>#</th><th>차트번호</th><th>이름</th><th class="r">현금수납</th><th class="r">계좌이체</th><th class="r">카드수납</th><th>메모</th><th></th></tr>
+          ${d.income.map((r, i) => `<tr><td>${i + 1}</td><td>${inp('income', i, 'chart', '', '차트번호')}</td><td>${inp('income', i, 'name', '', '이름')}</td><td>${inp('income', i, 'cash', 'n r')}</td><td>${inp('income', i, 'transfer', 'n r')}</td><td>${inp('income', i, 'card', 'n r')}</td><td>${inp('income', i, 'memo', '', '메모')}</td><td><button class="ghost sm" data-del="income:${i}">🗑️</button></td></tr>`).join('')}
+          <tr class="sum"><th colspan="3">합계</th><th class="r" data-sum="income:cash"></th><th class="r" data-sum="income:transfer"></th><th class="r" data-sum="income:card"></th><th colspan="2"></th></tr></table></div>
+          <button class="ghost sm" data-add="income">+ 행 추가</button></section>
+
+        <section class="card"><h3>구강용품 판매내역</h3>
+          <div class="tbl"><table class="mt dT"><tr><th>#</th><th>차트번호</th><th>이름</th><th>어시스트</th><th>제품명</th><th>직원</th><th class="r">판매가</th><th class="r">수량</th><th class="r">할인(%)</th><th class="r">최종금액</th><th>결제</th><th>메모</th><th></th></tr>
+          ${d.goods.map((r, i) => `<tr><td>${i + 1}</td><td>${inp('goods', i, 'chart', '', '차트번호')}</td><td>${inp('goods', i, 'name', '', '이름')}</td>
+            <td><select class="dIn" data-s="goods" data-i="${i}" data-k="assist"><option value="">선택</option>${staffNames.map((n) => `<option ${r.assist === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
+            <td>${inp('goods', i, 'product', '', '제품명')}</td><td class="c"><input type="checkbox" class="dIn" data-s="goods" data-i="${i}" data-k="staff" ${r.staff ? 'checked' : ''}></td>
+            <td>${inp('goods', i, 'price', 'n r')}</td><td>${inp('goods', i, 'qty', 'n r s')}</td><td>${inp('goods', i, 'disc', 'n r s')}</td><td class="r" data-gf="${i}"></td>
+            <td><select class="dIn" data-s="goods" data-i="${i}" data-k="pay"><option value="">선택</option>${PAYWAYS.map((w) => `<option ${r.pay === w ? 'selected' : ''}>${w}</option>`).join('')}</select></td>
+            <td>${inp('goods', i, 'memo', '', '메모')}</td><td><button class="ghost sm" data-del="goods:${i}">🗑️</button></td></tr>`).join('')}
+          <tr class="sum"><th colspan="9">합계</th><th class="r" data-sum="goods"></th><th colspan="3"></th></tr></table></div>
+          <button class="ghost sm" data-add="goods">+ 행 추가</button></section>
+
+        <section class="card"><h3>지출 입력</h3>
+          <div class="tbl"><table class="mt dT"><tr><th>#</th><th>지출내역</th><th class="r">금액</th><th>메모</th><th></th></tr>
+          ${d.expense.map((r, i) => `<tr><td>${i + 1}</td><td>${inp('expense', i, 'item', '', '지출내역')}</td><td>${inp('expense', i, 'amount', 'n r')}</td><td>${inp('expense', i, 'memo', '', '메모')}</td><td><button class="ghost sm" data-del="expense:${i}">🗑️</button></td></tr>`).join('')}
+          <tr class="sum"><th colspan="2">합계</th><th class="r" data-sum="expense"></th><th colspan="2"></th></tr></table></div>
+          <button class="ghost sm" data-add="expense">+ 행 추가</button></section>
+
+        <section class="card"><h3>덴트웹 자료 올리기</h3>
+          <p class="muted sm">덴트웹 <b>진료비 통계</b>·<b>수납 통계</b> 엑셀을 올리면 아래 전자차트 수납액과 직원별 매출이 자동으로 채워지게 연결할 예정이에요. 아직 덴트웹 파일 모양을 받지 못해서, 지금은 아래 전자차트 칸에 직접 넣어 주세요.</p>
+          <div class="row"><button class="ghost" disabled>📤 진료비 통계 (준비 중)</button><button class="ghost" disabled>📤 수납 통계 (준비 중)</button></div></section>
+
+        <section class="card"><h3>일계 마감</h3>
+          <div class="tbl"><table class="mt dT closeT"><tr><th>전일 시재</th><th>현금수납</th><th>현금지출</th><th>원장님 드린 돈</th><th>당일 시재</th></tr>
+            <tr><td><input class="dIn r" data-c="prevCash" inputmode="numeric" value="${num(d.close.prevCash) ? comma(num(d.close.prevCash)) : ''}" placeholder="0"></td><td class="r" id="cIn"></td><td class="r" id="cOut"></td>
+              <td><input class="dIn r" data-c="toDoc" inputmode="numeric" value="${num(d.close.toDoc) ? comma(num(d.close.toDoc)) : ''}" placeholder="0"></td><td class="r"><b id="cEnd"></b></td></tr></table></div>
+          <textarea id="cMemo" rows="2" placeholder="메모">${esc(d.close.memo || '')}</textarea></section>
+
+        <section class="card"><h3>매출 통계</h3>
+          <div class="tbl"><table class="mt dT statT">
+            <tr><th rowspan="2">총 매출</th><th colspan="4" class="blueH">전자차트 총 수납액</th><th colspan="3" class="yelH">수동 총 수납액 (수입 + 구강용품)</th></tr>
+            <tr><th class="blueH">카드수납</th><th class="blueH">현금수납</th><th class="blueH">기타(온라인)</th><th class="blueH">현금영수증</th><th class="yelH">현금</th><th class="yelH">계좌이체</th><th class="yelH">카드</th></tr>
+            <tr><td class="r"><b id="sTotal"></b></td>${['card', 'cash', 'other', 'receipt'].map((k) => `<td><input class="dIn r" data-dw="${k}" inputmode="numeric" value="${num(d.dw[k]) ? comma(num(d.dw[k])) : ''}" placeholder="0"></td>`).join('')}<td class="r" id="sMc"></td><td class="r" id="sMt"></td><td class="r" id="sMk"></td></tr>
+          </table></div>
+          <p class="muted sm">전자차트 금액은 덴트웹 자료를 연결하면 자동으로 들어가요.</p></section>
+      </div>
+    </div>`);
+  let dirty = false;
+  const recalc = () => {
+    const t = dailyTotals(d);
+    const S = (k, v) => { const e = $app.querySelector(`[data-sum="${k}"]`); if (e) e.textContent = comma(v); };
+    S('income:cash', t.inc.cash); S('income:transfer', t.inc.transfer); S('income:card', t.inc.card); S('goods', t.goods); S('expense', t.cashOut);
+    d.goods.forEach((g, i) => { const e = $app.querySelector(`[data-gf="${i}"]`); if (e) e.textContent = comma(goodsFinal(g)); });
+    document.getElementById('cIn').textContent = comma(t.cashIn); document.getElementById('cOut').textContent = comma(t.cashOut); document.getElementById('cEnd').textContent = comma(t.endCash);
+    document.getElementById('sTotal').textContent = comma(t.total);
+    document.getElementById('sMc').textContent = comma(t.inc.cash + t.gd.cash); document.getElementById('sMt').textContent = comma(t.inc.transfer + t.gd.transfer); document.getElementById('sMk').textContent = comma(t.inc.card + t.gd.card);
+  };
+  recalc();
+  const isNum = (el) => el.classList.contains('n') || el.dataset.c || el.dataset.dw;
+  $app.querySelectorAll('.dIn').forEach((el) => {
+    const set = () => {
+      const v = el.type === 'checkbox' ? el.checked : isNum(el) ? (el.value.trim() === '' ? 0 : Number(String(el.value).replace(/[^\d.-]/g, '')) || 0) : el.value;
+      if (el.dataset.s) d[el.dataset.s][+el.dataset.i][el.dataset.k] = v;
+      else if (el.dataset.c) d.close[el.dataset.c] = v;
+      else if (el.dataset.dw) d.dw[el.dataset.dw] = v;
+      dirty = true; recalc();
+    };
+    el.oninput = set; el.onchange = set;
+    if (isNum(el)) { el.onfocus = () => { el.value = el.value ? String(num(el.value)) : ''; el.select(); }; el.onblur = () => { el.value = num(el.value) ? comma(num(el.value)) : ''; }; }
+  });
+  document.getElementById('cMemo').oninput = (e) => { d.close.memo = e.target.value; dirty = true; };
+  const save = async (silent) => {
+    const clean = { ...d, month };
+    ['income', 'goods', 'expense'].forEach((k) => { clean[k] = d[k].filter((r) => Object.entries(r).some(([kk, v]) => v && !(kk === 'qty' && v === 1))); });
+    await setDoc(doc(db, 'daily', date), { ...JSON.parse(JSON.stringify(clean)), updatedAt: serverTimestamp(), updatedBy: me.name });
+    dirty = false; if (!silent) toast('저장했어요');
+  };
+  const leave = async (to) => { if (dirty && confirm('저장하지 않은 내용이 있어요. 저장할까요?')) await save(true); go('daily', { date: to }); };
+  document.getElementById('dSave').onclick = async () => { await save(); go('daily', { date }); };
+  $app.querySelectorAll('[data-add]').forEach((b) => b.onclick = () => { d[b.dataset.add].push(blank[b.dataset.add]()); save(true).then(() => go('daily', { date })); });
+  $app.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => { const [k, i] = b.dataset.del.split(':'); d[k].splice(+i, 1); save(true).then(() => go('daily', { date })); });
+  $app.querySelectorAll('[data-day]').forEach((b) => b.onclick = () => leave(b.dataset.day));
+  const shiftD = (n) => { const x = new Date(date); x.setDate(x.getDate() + n); return ymd(x); };
+  document.getElementById('dPrev').onclick = () => leave(shiftD(-1));
+  document.getElementById('dNext').onclick = () => leave(shiftD(1));
+  document.getElementById('cPrev').onclick = () => leave(`${ymd(new Date(y, m - 2, 1))}`);
+  document.getElementById('cNext').onclick = () => leave(`${ymd(new Date(y, m, 1))}`);
+}
+
+// ---------- 대시보드 ----------
+async function renderDash() {
+  const now = new Date();
+  const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const [y, m] = month.split('-').map(Number);
+  const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  const [ds, incDoc, incAll, people, salSnap, org] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'incentive', month)),
+    getDocs(collection(db, 'incentive')), loadPeople(), getDocs(collection(db, 'salaries')), loadOrg()]);
+  let inc = incDoc.exists() ? incDoc.data() : null;
+  if (!inc) { const prev = incAll.docs.map((x) => x.id).filter((k) => k < month).sort().pop(); if (prev) inc = incAll.docs.find((x) => x.id === prev).data(); }
+  const sal = {}; salSnap.docs.forEach((x) => { sal[x.id] = x.data(); });
+  const monthly = (uid) => sal[uid]?.annual ? Math.round(sal[uid].annual / 12) : num(sal[uid]?.monthly);
+  const tmap = {}; (org.groups || []).forEach((g) => (g.members || []).forEach((mm) => { tmap[mm.name] = mm.title || ''; }));
+  const working = people.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사' && !noPay(p, tmap));
+  const staff = working.filter((p) => p.role !== 'doctor'), doctors = working.filter((p) => p.role === 'doctor');
+  const teamOf = (p) => (p.team || '').trim();
+  const ratio = num(inc?.ratio) || 20;
+  const totalPay = staff.reduce((s, p) => s + monthly(p.uid), 0);
+  const target = totalPay / (ratio / 100);
+  const clinicTeams = inc?.clinicTeams || [];
+  const payOfTeam = (t) => staff.filter((p) => teamOf(p) === t).reduce((s, p) => s + monthly(p.uid), 0);
+  const clinicPay = clinicTeams.reduce((s, t) => s + payOfTeam(t), 0);
+  // 매출 합계
+  const days = ds.docs.map((x) => ({ id: x.id, ...x.data() })).sort((a, b) => a.id.localeCompare(b.id));
+  const dmap = {}; days.forEach((x) => { dmap[x.id] = dailyTotals(x).total; });
+  const byDay = Array.from({ length: new Date(y, m, 0).getDate() }, (_, i) => { const k = `${month}-${pad(i + 1)}`; return { d: k, v: dmap[k] || 0 }; });
+  const total = byDay.reduce((s, x) => s + x.v, 0);
+  const byStaff = {}; days.forEach((x) => Object.entries(x.dw?.byStaff || {}).forEach(([n, v]) => { byStaff[n] = (byStaff[n] || 0) + num(v); }));
+  const adj = JSON.parse(JSON.stringify(inc?.adjust || {}));
+  const ADJ = [['ins', '보험 조정'], ['prev', '전월 미달성'], ['help', '타팀 지원 차감']];
+  const adjSum = (t) => ADJ.reduce((s, [k]) => s + num(adj[t]?.[k]), 0);
+  const teamRev = (t) => staff.filter((p) => teamOf(p) === t).reduce((s, p) => s + (byStaff[p.name] || 0), 0);
+  const pct = (a, b) => b ? Math.round(a / b * 1000) / 10 : 0;
+  const ring = (p) => `<div class="ring" style="--p:${Math.min(100, p)}"><span>${p}%</span></div>`;
+  const totalAdj = clinicTeams.reduce((s, t) => s + adjSum(t), 0);
+  const totalOver = total - totalAdj - target;
+  const teamCards = clinicTeams.map((t, i) => {
+    const tg = clinicPay ? target * payOfTeam(t) / clinicPay : 0, rev = teamRev(t), a = adjSum(t), over = rev - a - tg;
+    const rate = num(inc?.clinicRate), amt = Math.max(0, over) * rate / 100, lm = num(inc?.leaderMax) || 70;
+    const mem = staff.filter((p) => teamOf(p) === t).sort((x, z) => (x.role === 'leader' ? -1 : 0) - (z.role === 'leader' ? -1 : 0));
+    return { t, i, tg, rev, a, over, amt, lm, mem };
+  });
+  const unitRes = (inc?.units || []).filter((u) => num(u.rate) > 0).map((u) => ({ name: u.name, amt: Math.max(0, totalOver) * num(u.rate) / 100, rate: u.rate }));
+  const docRes = doctors.map((p) => { const r = num(inc?.doctorRatios?.[p.uid]) || ratio, tg = monthly(p.uid) / (r / 100), rev = byStaff[p.name] || 0;
+    return { p, tg, rev, amt: Math.max(0, rev - tg) * num(inc?.doctorRates?.[p.uid]) / 100 }; });
+  const incTotal = teamCards.reduce((s, c) => s + c.amt, 0) + unitRes.reduce((s, u) => s + u.amt, 0) + docRes.reduce((s, d) => s + d.amt, 0);
+  const maxDay = Math.max(1, ...byDay.map((x) => x.v));
+  const W = (n) => comma(Math.round(n));
+
+  shell(`
+    <div class="row between"><div><p class="eyebrow">DASHBOARD</p><h1>대시보드</h1></div>
+      <div class="row"><button class="ghost" id="mPrev">◀</button><b class="monthLbl">${y}년 ${m}월</b><button class="ghost" id="mNext">▶</button></div></div>
+    ${!inc ? '<p class="reqNow">목표매출·인센티브 설정이 아직 없어요. 먼저 <b>목표매출·인센티브</b>에서 저장해 주세요.</p>' : ''}
+    <div class="kpis dashK">
+      <div class="kpi"><span>성과</span><b class="${total - totalAdj >= target ? 'accent' : ''}">${target ? (total - totalAdj >= target ? '목표 달성! ' : '') + pct(total - totalAdj, target) + '%' : '-'}</b></div>
+      <div class="kpi"><span>이번 달 매출</span><b>${W(total)}원</b></div>
+      <div class="kpi"><span>입력된 날</span><b>${days.length}일</b></div>
+      <div class="kpi"><span>인센티브 예상 총액</span><b>${W(incTotal)}원</b></div>
+    </div>
+
+    <h3 class="dashH">목표 대비 성과</h3>
+    <div class="dashGrid">
+      <div class="card dCard"><h4>📈 전체 성과</h4>${ring(pct(total - totalAdj, target))}
+        <dl><dt>목표매출</dt><dd>${W(target)}</dd><dt>달성매출</dt><dd class="accent">${W(total)}</dd><dt>차감매출</dt><dd>${W(totalAdj)}</dd><dt>초과매출</dt><dd class="${totalOver >= 0 ? 'accent' : 'neg'}">${totalOver >= 0 ? '+' : ''}${W(totalOver)}</dd></dl></div>
+      ${teamCards.map((c) => `<div class="card dCard"><h4><span class="tnum">${c.i + 1}</span>${esc(c.t)}</h4>${ring(pct(c.rev - c.a, c.tg))}
+        <dl><dt>목표매출</dt><dd>${W(c.tg)}</dd><dt>달성매출</dt><dd class="accent">${W(c.rev)}</dd><dt>차감매출</dt><dd>${W(c.a)}</dd><dt>초과매출</dt><dd class="${c.over >= 0 ? 'accent' : 'neg'}">${c.over >= 0 ? '+' : ''}${W(c.over)}</dd></dl></div>`).join('')}
+    </div>
+
+    <h3 class="dashH">인센티브</h3>
+    <div class="dashGrid">
+      ${teamCards.map((c) => `<div class="card dCard"><h4><span class="tnum">${c.i + 1}</span>${esc(c.t)}</h4>
+        <dl><dt>합계</dt><dd class="accent">${W(c.amt)}</dd><dt>팀장 최대 (${c.lm}%)</dt><dd>${W(c.amt * c.lm / 100)}</dd><dt>팀원 최소</dt><dd>${W(c.amt * (100 - c.lm) / 100)}</dd></dl>
+        <p class="muted sm">${c.mem.map((p) => `${esc(p.name)}${p.role === 'leader' ? ' (팀장)' : ''}`).join(' · ') || '팀원 없음'}</p></div>`).join('')}
+      ${docRes.length ? `<div class="card dCard"><h4>👨‍⚕️ 원장</h4><dl>${docRes.map((r) => `<dt>${esc(r.p.name)} <small class="muted">목표 ${W(r.tg)} · 매출 ${W(r.rev)}</small></dt><dd class="accent">${W(r.amt)}</dd>`).join('')}</dl></div>` : ''}
+      <div class="card dCard"><h4>🏆 비진료부</h4><dl>${unitRes.map((u) => `<dt>${esc(u.name)} (${u.rate}%)</dt><dd>${W(u.amt)}</dd>`).join('') || '<dt class="muted">비율이 정해진 항목이 없어요</dt><dd></dd>'}</dl></div>
+    </div>
+
+    <h3 class="dashH">차감매출 <small class="muted">팀별로 입력하면 저장돼요</small></h3>
+    <div class="dashGrid">
+      ${clinicTeams.map((t, i) => `<div class="card dCard"><h4><span class="tnum">${i + 1}</span>${esc(t)}</h4><dl>
+        ${ADJ.map(([k, l]) => `<dt>${l}</dt><dd><input class="adjIn" data-t="${esc(t)}" data-k="${k}" inputmode="numeric" value="${num(adj[t]?.[k]) ? comma(num(adj[t][k])) : ''}" placeholder="0"></dd>`).join('')}
+        <dt><b>합계</b></dt><dd class="neg">${W(adjSum(t))}</dd></dl></div>`).join('') || '<p class="muted">진료팀이 정해지지 않았어요.</p>'}
+    </div>
+
+    <div class="dashGrid two">
+      <div class="card"><h4>📊 일별 매출</h4>${days.length ? `<div class="bars">${byDay.map((x) => `<div class="bar1" title="${x.d} ${W(x.v)}원"><i style="height:${Math.round(x.v / maxDay * 100)}%"></i><small>${+x.d.slice(8)}</small></div>`).join('')}</div>` : '<p class="muted">일계표가 아직 없어요.</p>'}</div>
+      <div class="card"><h4>👤 개인 성과</h4><div class="tbl"><table class="mt incT"><tr><th>이름</th><th>팀</th><th class="r">매출</th></tr>
+        ${[...staff.filter((p) => clinicTeams.includes(teamOf(p))), ...doctors].map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(teamOf(p) || (p.role === 'doctor' ? '원장' : ''))}</td><td class="r">${W(byStaff[p.name] || 0)}</td></tr>`).join('')}</table></div>
+        <p class="muted sm">개인별 매출은 덴트웹 자료를 연결하면 자동으로 채워져요.</p></div>
+    </div>`);
+  document.getElementById('mPrev').onclick = () => go('dash', { month: shift(-1) });
+  document.getElementById('mNext').onclick = () => go('dash', { month: shift(1) });
+  $app.querySelectorAll('.adjIn').forEach((el) => {
+    el.onfocus = () => { el.value = el.value ? String(num(el.value)) : ''; el.select(); };
+    el.onchange = async () => {
+      const { t, k } = el.dataset; adj[t] ||= {}; adj[t][k] = Number(String(el.value).replace(/[^\d.-]/g, '')) || 0;
+      if (!incDoc.exists()) { alert('먼저 목표매출·인센티브에서 이 달 설정을 저장해 주세요.'); return; }
+      await setDoc(doc(db, 'incentive', month), { adjust: adj }, { merge: true });
+      toast('저장했어요'); go('dash', { month });
+    };
   });
 }
 

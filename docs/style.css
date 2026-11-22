@@ -663,3 +663,40 @@ td.accent, .incT .accent { color: var(--c); }
 .rateRow .numBox { width: 4.2rem !important; }
 @media (max-width: 760px) { .rateRow { grid-template-columns: 1fr 80px 32px; } .rateRow input[type=range] { grid-column: 1 / -1; grid-row: 2; } .rateRow > span.muted { grid-column: 1 / -1; } }
 table.incT td { vertical-align: middle; }
+/* 일계표 */
+.dailyGrid { display: grid; grid-template-columns: 270px 1fr; gap: 1rem; align-items: start; }
+@media (max-width: 1000px) { .dailyGrid { grid-template-columns: 1fr; } }
+.dCal { position: sticky; top: 76px; }
+.calGrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: .25rem; text-align: center; margin: .7rem 0; }
+.calGrid span { font-size: .75rem; color: var(--muted); }
+.calGrid button { padding: .4rem 0; border-radius: 8px; font-size: .85rem; border: 1px solid transparent; background: none; width: auto; }
+.calGrid button.has { background: var(--c2); font-weight: 700; }
+.calGrid button.today { border-color: var(--c); }
+.calGrid button.on { background: var(--c); color: #fff; }
+.dot { display: inline-block; width: .7rem; height: .7rem; border-radius: 3px; vertical-align: middle; } .dot.has { background: var(--c2); border: 1px solid var(--c); }
+table.dT { font-size: .86rem; }
+table.dT td, table.dT th { padding: .25rem .35rem; vertical-align: middle; }
+table.dT input, table.dT select { margin: 0; padding: .3rem .4rem; font-size: .86rem; min-width: 4.5rem; }
+table.dT input.r { text-align: right; } table.dT input.s { min-width: 3rem; width: 3.5rem; } table.dT td.c { text-align: center; }
+table.dT input[type=checkbox] { min-width: 0; width: auto; }
+table.dT tr.sum th { background: var(--bg); text-align: right; }
+table.statT .blueH { background: #e4effa; } table.statT .yelH { background: #fdf3e1; }
+table.statT td { text-align: right; }
+/* 대시보드 */
+.dashK { grid-template-columns: repeat(4, 1fr); }
+.dashH { margin: 1.6rem 0 .6rem; }
+.dashGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: .9rem; }
+.dashGrid.two { grid-template-columns: 1fr 1fr; margin-top: 1.4rem; }
+@media (max-width: 900px) { .dashGrid.two { grid-template-columns: 1fr; } .dashK { grid-template-columns: 1fr 1fr; } }
+.dCard h4 { display: flex; align-items: center; gap: .5rem; margin: 0 0 .6rem; }
+.dCard dl { display: grid; grid-template-columns: 1fr auto; gap: .45rem .6rem; margin: .6rem 0 0; }
+.dCard dt { color: var(--muted); font-size: .9rem; } .dCard dd { margin: 0; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dCard dd.neg, .neg { color: #c0392b; }
+.dCard .adjIn { width: 7.5rem; text-align: right; margin: 0; padding: .25rem .4rem; }
+.tnum { display: inline-flex; width: 1.7rem; height: 1.7rem; border-radius: 50%; background: var(--c2); color: var(--c); align-items: center; justify-content: center; font-size: .85rem; }
+.ring { --p: 0; width: 120px; height: 120px; border-radius: 50%; margin: .4rem auto; display: grid; place-items: center; background: conic-gradient(var(--c) calc(var(--p) * 1%), #eceeee 0); }
+.ring span { width: 88px; height: 88px; border-radius: 50%; background: #fff; display: grid; place-items: center; font-weight: 800; }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 180px; padding-top: .5rem; overflow-x: auto; }
+.bar1 { flex: 1; min-width: 14px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.bar1 i { display: block; width: 100%; background: var(--c); border-radius: 4px 4px 0 0; min-height: 2px; }
+.bar1 small { font-size: .65rem; color: var(--muted); }
