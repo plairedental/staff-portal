@@ -597,3 +597,6 @@ aside.side button.mi.deep.on { color: var(--c); }
   body.printModal .paper.cert .tel { margin-top: auto; padding-top: 6mm; font-size: 13px; }
 }
 
+.paper table.dt.info4 { table-layout: fixed; }
+.paper table.dt.info4 th { width: auto; }
+.paper table.dt.info4 td:nth-child(2) { white-space: nowrap; }
