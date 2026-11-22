@@ -649,3 +649,8 @@ table.incT td.r, table.incT th.r { text-align: right; white-space: nowrap; }
 table.incT .actIn { width: 9rem; text-align: right; margin: 0; padding: .3rem .4rem; }
 table.incT tr.sum th { background: var(--c2); }
 table.incT .ok { color: var(--c); font-weight: 800; }
+.sliderRow.tight { margin: .5rem 0 .2rem; }
+.rateCard.main { border-color: var(--c); background: var(--c2); }
+.subH { margin: 1.2rem 0 .5rem; color: var(--muted); font-size: .9rem; }
+.nowrap { white-space: nowrap; }
+td.accent, .incT .accent { color: var(--c); }
