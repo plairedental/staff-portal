@@ -529,3 +529,16 @@ details#wbox[open] .primaryLink { margin-bottom: .8rem; }
 .trow input, .trow select { width: auto; flex: 0 1 180px; margin: 0; padding: .35rem .5rem; }
 .trow .ttl { flex: 1 1 220px; }
 .tgrp { margin: 1rem 0 .3rem; color: var(--c); }
+/* 목차 3단계: 그룹 > 작은 제목(토글) > 페이지 */
+details.mgrp > summary { font-size: 1rem; }
+details.msubg { margin: .1rem 0 .1rem .9rem; border-left: 2px solid var(--line); }
+details.msubg > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: .35rem; padding: .4rem .5rem; border-radius: 6px; font-weight: 700; font-size: .9rem; color: var(--c); }
+details.msubg > summary::-webkit-details-marker { display: none; }
+details.msubg > summary::before { content: '▸'; font-size: .8rem; transition: transform .15s; display: inline-block; }
+details.msubg[open] > summary::before { transform: rotate(90deg); }
+details.msubg > summary small { margin-left: auto; color: var(--muted); font-weight: 400; }
+details.msubg > summary:hover { background: var(--bg); }
+aside.side button.mi.deep { padding-left: 1.5rem; font-size: .84rem; color: #3d4747; }
+aside.side button.mi.deep::before { content: '·'; position: absolute; margin-left: -.7rem; color: var(--muted); }
+aside.side button.mi.deep { position: relative; }
+aside.side button.mi.deep.on { color: var(--c); }

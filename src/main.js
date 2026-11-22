@@ -640,11 +640,15 @@ function manualSide(key) {
   const groups = c.tree.groups.map((g) => {
     const ps = mPages().filter((p) => p.group === g.name).sort(mSort);
     if (!ps.length && !can.editManual()) return '';
-    let lastSub = null;
-    const items = ps.map((p) => {
-      let h = '';
-      if ((p.sub || '') !== lastSub) { lastSub = p.sub || ''; if (lastSub) h += `<div class="msub">${esc(lastSub)}</div>`; }
-      return h + `<button data-k="mp:${p.id}" class="mi ${curId === p.id ? 'on' : ''}">${esc(p.title)}</button>`;
+    // 작은 제목(sub)별로 한 번 더 열고 닫기
+    const runs = [];
+    ps.forEach((p) => { const sname = p.sub || ''; const last = runs[runs.length - 1]; if (last && last.sub === sname) last.ps.push(p); else runs.push({ sub: sname, ps: [p] }); });
+    const pbtn = (p, cls = '') => `<button data-k="mp:${p.id}" class="mi ${cls} ${curId === p.id ? 'on' : ''}">${esc(p.title)}</button>`;
+    const items = runs.map((r) => {
+      if (!r.sub) return r.ps.map((p) => pbtn(p)).join('');
+      const k = g.name + '/' + r.sub;
+      const sOpen = open[k] || r.ps.some((p) => p.id === curId);
+      return `<details class="msubg" data-g="${esc(k)}" ${sOpen ? 'open' : ''}><summary>${esc(r.sub)} <small>${r.ps.length}</small></summary>${r.ps.map((p) => pbtn(p, 'deep')).join('')}</details>`;
     }).join('');
     const isOpen = open[g.name] || curG === g.name;
     return `<details class="mgrp" data-g="${esc(g.name)}" ${isOpen ? 'open' : ''}><summary>${esc(g.name)} <small>${ps.length}</small></summary>${items || '<p class="muted sm">페이지 없음</p>'}</details>`;
@@ -654,7 +658,7 @@ function manualSide(key) {
     <div id="mresult"></div><div id="mgroups">${groups}</div></details></div>`;
 }
 function bindManualSide() {
-  document.querySelectorAll('details.mgrp').forEach((d) => d.addEventListener('toggle', () => {
+  document.querySelectorAll('details.mgrp, details.msubg').forEach((d) => d.addEventListener('toggle', () => {
     let o = {}; try { o = JSON.parse(localStorage.getItem('mOpen') || '{}'); } catch (e) { /* 무시 */ }
     o[d.dataset.g] = d.open; localStorage.setItem('mOpen', JSON.stringify(o));
   }));
