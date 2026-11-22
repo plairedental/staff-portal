@@ -2321,15 +2321,19 @@ async function renderPayroll() {
   document.getElementById('savePay').onclick = async (ev) => {
     ev.target.disabled = true;
     const clean = {};
-    people.forEach((p) => { clean[p.uid] = { ...rows[p.uid], name: p.name }; });
+    people.forEach((p) => { clean[p.uid] = JSON.parse(JSON.stringify({ ...rows[p.uid], name: p.name })); });
     await setDoc(ref, { rows: clean, payDate, updatedAt: serverTimestamp(), updatedBy: me.name });
     // 직원별 명세서 공개/회수
     let n = 0;
+    const fail = [];
     for (const p of people) {
       const sref = doc(db, 'payslips', `${month}_${p.uid}`);
-      if (['확정', '지급완료'].includes(clean[p.uid].status)) { await setDoc(sref, slipData(month, payDate, p, clean[p.uid])); n++; }
-      else await deleteDoc(sref).catch(() => {});
+      try {
+        if (['확정', '지급완료'].includes(clean[p.uid].status)) { await setDoc(sref, slipData(month, payDate, p, clean[p.uid])); n++; }
+        else await deleteDoc(sref).catch(() => {});
+      } catch (er) { console.error(er); fail.push(p.name); }
     }
+    if (fail.length) alert('명세서를 만들지 못한 직원: ' + fail.join(', '));
     dirty = false; document.getElementById('dirty').textContent = ''; ev.target.disabled = false;
     toast(`저장했어요 · 명세서 ${n}명 공개`);
   };
@@ -2340,11 +2344,13 @@ function slipData(month, payDate, p, r) {
   return {
     uid: p.uid, month, payDate: payDate || '', clinicName: theme.clinicName,
     name: p.name, dept: r.dept || p.dept || '', job: r.job || p.job || '', hireDate: r.hireDate || p.hireDate || '',
-    pay: PAY_ALL.filter((k) => PAY_ITEMS.includes(k) || num(r.pay?.[k])).map((k) => [k, num(r.pay?.[k])]), ded: DED_ITEMS.map((k) => [k, num(r.ded?.[k])]),
+    pay: PAY_ALL.filter((k) => PAY_ITEMS.includes(k) || num(r.pay?.[k])).map((k) => ({ k, v: num(r.pay?.[k]) })), ded: DED_ITEMS.map((k) => ({ k, v: num(r.ded?.[k]) })),   // Firestore는 배열 안 배열을 못 저장해서 {k, v} 모양
     payTotal: payOf(r), dedTotal: dedOf(r), net: netOf(r)
   };
 }
 function slipHtml(s) {
+  const kv = (x) => Array.isArray(x) ? x : x ? [x.k, x.v] : [];
+  s = { ...s, pay: (s.pay || []).map(kv), ded: (s.ded || []).map(kv) };
   const n = Math.max(s.pay.length, s.ded.length);
   const v = (x) => x ? comma(x) : '';
   return `<div class="slip">
