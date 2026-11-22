@@ -2,7 +2,7 @@
   "name": "staff-portal",
   "private": true,
   "scripts": {
-    "build": "esbuild src/main.js --bundle --minify --format=esm --target=es2020 --splitting --outdir=docs --entry-names=app --chunk-names=chunks/[name]-[hash]"
+    "build": "sh build.sh"
   },
   "dependencies": {
     "firebase": "^13.4.0",
