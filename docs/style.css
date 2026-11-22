@@ -264,3 +264,70 @@ aside.side { display: flex; flex-direction: column; }
   .sideBottom { margin: 0; padding: 0 0 0 .4rem; border-top: none; border-left: 2px solid var(--line); }
   .secCard { padding: 1rem; }
 }
+.sideGroup { display: flex; flex-direction: column; padding-top: .6rem; }
+.sideGroup + .sideGroup { margin-top: .6rem; border-top: 1px solid var(--line); }
+@media (max-width: 760px) {
+  .sideGroup { flex-direction: row; gap: .3rem; padding: 0; }
+  .sideGroup + .sideGroup { margin: 0 0 0 .3rem; border-top: none; border-left: 2px solid var(--line); padding-left: .3rem; }
+}
+
+/* 조직도 */
+.orgTop { display: flex; justify-content: center; margin: 1rem 0; }
+.orgTop .brand { background: var(--c); color: #fff; padding: .6rem 1.4rem; border-radius: 12px; }
+.orgTop .brand span { color: #e6f2f1; }
+.orgRow { display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap; }
+.orgLine { width: 2px; height: 1.5rem; background: var(--line); margin: .5rem auto; }
+.orgGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; align-items: start; }
+.og { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; min-width: 250px; }
+.og.doc { border-color: var(--c); }
+.ogh { background: var(--c2); color: var(--c); font-weight: 800; padding: .6rem 1rem; }
+.og.doc .ogh { background: var(--c); color: #fff; }
+.ogh small { font-weight: 400; opacity: .8; margin-left: .3rem; }
+.op { padding: .7rem 1rem; border-top: 1px solid var(--line); }
+.op:first-of-type { border-top: none; }
+.op .tag { margin-left: .4rem; }
+.op p { margin: .25rem 0 0; font-size: .84rem; line-height: 1.45; }
+.oe .gname { font-weight: 700; max-width: 220px; }
+.oeT input { min-width: 6rem; padding: .35rem .45rem; }
+.oeT td { padding: .2rem; } .nowrap { white-space: nowrap; }
+
+/* 근무표 달력 */
+.seg2 button.on { background: var(--c); color: #fff; border-color: var(--c); }
+.calWrap { overflow-x: auto; margin: .6rem 0; }
+table.cal { width: 100%; min-width: 640px; border-collapse: collapse; table-layout: fixed; background: #fff; border-radius: 12px; overflow: hidden; }
+.cal th { padding: .5rem; background: #f7f9f9; font-size: .85rem; color: var(--muted); border: 1px solid var(--line); }
+.cal th.sun, .cal .sun .dn b, .cal .hol .dn b { color: #c0392b; } .cal th.sat, .cal .sat .dn b { color: #2b6cb0; }
+.cal td.cd { vertical-align: top; height: 7rem; padding: .35rem .4rem; border: 1px solid var(--line); }
+.cal td.out { background: #fafbfb; }
+.cal td.sun { background: #fdf7f6; }
+.cal td.edit { cursor: pointer; } .cal td.edit:hover { background: var(--c2); }
+.dn { display: flex; align-items: baseline; gap: .3rem; margin-bottom: .25rem; }
+.dn small { color: #c0392b; font-size: .68rem; line-height: 1.1; }
+.closed { font-size: .75rem; }
+.ln { display: flex; flex-wrap: wrap; gap: .15rem .25rem; align-items: center; margin-top: .2rem; font-size: .78rem; }
+.ln > span { font-size: .66rem; font-weight: 700; padding: .05rem .35rem; border-radius: 4px; }
+.ln em { font-style: normal; }
+.ln em.mine { font-weight: 800; text-decoration: underline; }
+.l-연차 > span { background: #fdecef; color: #b83280; }
+.l-비번 > span { background: #e9ecef; color: #444; }
+.l-야간빠짐 > span { background: #efe9fb; color: #6b46c1; }
+.legend { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; color: var(--muted); }
+.legend .ln { margin: 0; }
+.pick { margin: .8rem 0; }
+.pickG { display: flex; flex-direction: column; gap: .3rem; margin-top: .4rem; }
+.pickG > div { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.pickG small { width: 5.5rem; }
+.chip { padding: .3rem .7rem; border-radius: 99px; font-size: .85rem; }
+.chip.on { background: var(--c); color: #fff; border-color: var(--c); }
+.sched tr.grp th { background: var(--c2); color: var(--c); font-size: .78rem; text-align: left; padding: .25rem .6rem; height: auto; }
+.sched tr.grp.doc th { background: var(--c); color: #fff; }
+.sched td.hol { background: #fdf3f2; }
+.k-비번 { background: #e9ecef !important; color: #555 !important; }
+.k-야간빠짐 { background: #efe9fb !important; color: #6b46c1 !important; font-size: .7rem; }
+@media (max-width: 760px) {
+  table.cal { min-width: 560px; }
+  .cal td.cd { height: 6rem; padding: .25rem; }
+  .ln { font-size: .7rem; }
+  .pickG small { width: 100%; }
+}
+.ghostUp { background: #fff; color: var(--text) !important; border: 1px solid var(--line); }

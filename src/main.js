@@ -163,41 +163,41 @@ function renderWaiting() {
 // ---------- 화면 틀: 상단 카테고리 + 좌측 메뉴 ----------
 // 메뉴 항목: [키, 이름, 아이콘, 설명, 보이는 조건]
 function categories() {
+  const f = (items) => (items || []).filter((i) => !i[4] || i[4]());
   return [
     { key: 'biz', label: '경영·통계', icon: '📊', show: () => me.role === 'admin', items: [
       ['perf', '성과·인센티브', '📈', '팀별 목표 매출과 인센티브를 확인해요. (준비 중)']
     ] },
     { key: 'hr', label: '인사관리', icon: '👥', items: [
-      ['work:schedule', '근무표', '🗓️', '월별 근무·휴무 일정을 확인해요.'],
-      ['work:leave', '내 연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.'],
-      ['slips', '급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.']
+      ['org', '조직도', '🏥', '부서·팀 구성과 담당 업무를 확인해요.'],
+      ['work:schedule', '근무표', '🗓️', '그날 쉬는 사람을 달력으로 확인해요.'],
+      ['work:leave', '내 연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.']
+    ], admin: [
+      ['work:all', '연차 승인·현황', '✅', '직원 연차 신청을 승인하고 사용 현황을 봐요.', canApprove],
+      ['hr', '회원관리', '👥', '직원 정보, 연봉, 가입 승인을 관리해요.', can.hr]
+    ] },
+    { key: 'pay', label: '급여', icon: '💰', items: [
+      ['slips', '내 급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.']
+    ], admin: [
+      ['payroll', '직원 급여 관리', '💰', '전체 직원 급여대장과 총 인건비를 봐요.', () => me.role === 'admin']
     ] },
     { key: 'manual', label: '원내매뉴얼', icon: '📘', items: [
       ['manual', '매뉴얼 목록', '📘', '원내 업무 매뉴얼을 찾아봐요.']
+    ], admin: [
+      ['manual:new', '매뉴얼 작성', '✏️', '새 매뉴얼을 작성해요.', can.editManual]
     ] }
   ].filter((c) => !c.show || c.show())
-   .map((c) => ({ ...c, items: c.items.filter((i) => !i[4] || i[4]()) }));
+   .map((c) => ({ ...c, items: f(c.items), admin: f(c.admin) }));
 }
-// 좌측 아래 고정 메뉴: 내 계정 + 권한 있는 사람만 보는 관리 메뉴
-function bottomGroups() {
-  const f = (items) => items.filter((i) => !i[4] || i[4]());
-  return [
-    { label: '내 계정', icon: '👤', items: f([
-      ['my', '마이페이지', '👤', '내 기본정보, 연봉, 글씨 크기를 확인해요.'],
-      ['security', '보안정책', '🛡️', '내 정보가 어떻게 보호되는지 확인해요.']
-    ]) },
-    { label: '관리자 메뉴', icon: '🔒', items: f([
-      ['hr', '회원관리', '👥', '직원 정보, 연봉, 가입 승인을 관리해요.', can.hr],
-      ['work:all', '직원 연차 현황', '📋', '직원 전체의 연차 사용 내역을 확인해요.', canApprove],
-      ['payroll', '급여 관리', '💰', '월별 급여대장과 총 인건비를 봐요.', () => me.role === 'admin'],
-      ['manual:new', '매뉴얼 작성', '✏️', '새 매뉴얼을 작성해요.', can.editManual],
-      ['settings', '화면 설정', '🎨', '글씨체, 색상, 로고를 바꿔요.', () => me.role === 'admin']
-    ]) }
-  ].filter((g) => g.items.length);
-}
+// 좌측 아래: 관리자 메뉴(카테고리마다 다름) → 맨 아래 내 계정
+const GLOBAL_ADMIN = () => [['settings', '화면 설정', '🎨', '글씨체, 색상, 로고를 바꿔요.', () => me.role === 'admin']].filter((i) => i[4]());
+const MY_ITEMS = [
+  ['my', '마이페이지', '👤', '내 기본정보, 연봉, 글씨 크기를 확인해요.'],
+  ['security', '보안정책', '🛡️', '내 정보가 어떻게 보호되는지 확인해요.']
+];
 let lastCat = 'hr';
 const curKey = () => view === 'work' ? 'work:' + (sub?.tab || 'schedule') : (view === 'manual' && sub?.edit === null ? 'manual:new' : view);
-const catOf = (key) => categories().find((c) => c.items.some((i) => i[0] === key));
+const catOf = (key) => categories().find((c) => [...c.items, ...c.admin].some((i) => i[0] === key));
 function goKey(key) {
   if (key === 'work:schedule') return go('work', { tab: 'schedule' });
   if (key === 'work:leave') return go('work', { tab: 'leave' });
@@ -229,7 +229,8 @@ function shell(content) {
           ${cat.items.map(btn).join('')}
         </div>
         <div class="sideBottom">
-          ${bottomGroups().map((g) => `<div class="sideTitle">${g.icon} ${g.label}</div>${g.items.map(btn).join('')}`).join('')}
+          ${[...cat.admin, ...GLOBAL_ADMIN()].length ? `<div class="sideGroup"><div class="sideTitle">🔒 관리자 메뉴</div>${[...cat.admin, ...GLOBAL_ADMIN()].map(btn).join('')}</div>` : ''}
+          <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
       <main class="${['work:schedule', 'payroll', 'work:all'].includes(key) ? 'wide' : ''}">${content}</main>
@@ -243,7 +244,8 @@ function shell(content) {
 function go(v, s = null) { view = v; sub = s; render(); window.scrollTo(0, 0); }
 
 function renderHome() {
-  const cats = [...categories(), ...bottomGroups()];
+  const cats = [...categories().map((c) => ({ ...c, items: [...c.items, ...c.admin.map((i) => [i[0], '🔒 ' + i[1], i[2], i[3]])] })),
+    { label: '내 계정', icon: '👤', items: [...MY_ITEMS, ...GLOBAL_ADMIN()] }];
   shell(`
     <div class="welcome">${theme.logo ? `<img src="${theme.logo}" alt="">` : `<span class="badge">${esc((theme.clinicName || '치')[0])}</span>`}
       <p><b>${esc(me.name)}</b> ${ROLES[me.role]}님,<br>${esc(theme.clinicName)}에 오신 것을 환영합니다.</p></div>
@@ -272,6 +274,7 @@ async function render() {
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
     if (view === 'slips') return await renderMySlips();
     if (view === 'security') return renderSecurity();
+    if (view === 'org') return await renderOrg();
     if (view === 'my') return await renderMy();
     view = 'home'; return renderHome();
   } catch (e) {
@@ -689,7 +692,7 @@ async function renderWork() {
   const tab = sub?.tab || 'schedule';
   if (tab === 'leave') return renderMyLeave();
   if (tab === 'all' && canApprove()) return renderLeaveAll();
-  return renderSchedule('<h1>근무표</h1>', () => {});
+  return renderSchedule();
 }
 
 // 연차 대시보드 (한 사람)
@@ -752,9 +755,10 @@ function bindLeaveActions(leaves, back) {
 const approverActions = (l) => l.status === '대기' ? `<button data-ok="${l.id}" class="primary sm">승인</button><button data-no="${l.id}" class="ghost sm">반려</button>`
   : l.status === '승인' ? `<button data-undo="${l.id}" class="ghost sm danger">승인 취소</button>` : '';
 
+const DEFAULT_RULES = '';
 async function rulesSection() {
   const d = await getDoc(doc(db, 'settings', 'leaveRules'));
-  const text = d.exists() ? d.data().text || '' : '';
+  const text = d.exists() ? d.data().text || '' : DEFAULT_RULES;
   return { text, html: `
     <section class="card" id="rulesCard">
       <div class="row between"><h2>📖 우리 치과 연차 사용 규칙</h2>${me.role === 'admin' ? '<button id="editRules" class="ghost sm">수정</button>' : ''}</div>
@@ -941,7 +945,7 @@ async function renderPayroll() {
   const people = ids.map((id) => all.find((p) => p.uid === id) || { uid: id, name: rows[id]?.name || '(삭제된 직원)', role: 'staff' })
     .sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9) || (a.team || '').localeCompare(b.team || '', 'ko') || a.name.localeCompare(b.name, 'ko'));
   people.forEach((p) => {
-    rows[p.uid] ||= { pay: sal[p.uid]?.monthly ? { '기본급': sal[p.uid].monthly } : {}, ded: {}, status: '작성중' };
+    rows[p.uid] ||= { pay: {}, ded: {}, status: '작성중' };
     rows[p.uid].pay ||= {}; rows[p.uid].ded ||= {};
   });
   const detail = sub?.detail ?? false;
@@ -956,10 +960,12 @@ async function renderPayroll() {
       <div class="row"><button id="prev" class="ghost">◀</button><div class="monthBox"><b>${monthTitle(month)} 급여</b>
         <label class="sm">지급일 <input type="date" id="payDate" value="${payDate}"></label></div><button id="next" class="ghost">▶</button></div></div>
     ${warn ? `<div class="card warn sm">${warn}</div>` : ''}
+    ${!snap.exists() && !sub?.imported ? `<div class="card sm muted">${monthTitle(month)} 급여는 아직 입력되지 않았어요. 세무 급여대장 엑셀을 올리거나 칸에 직접 입력해 주세요.</div>` : ''}
     <div class="row between toolbar">
       <div class="row">
         <label class="upload primary">📤 세무 급여대장 엑셀 올리기<input type="file" id="xls" accept=".xlsx,.xls" hidden></label>
         <button id="copyPrev" class="ghost sm">📋 전월 불러오기</button>
+        ${snap.exists() ? '<button id="delMonth" class="ghost sm danger">🗑️ 이 달 전체 삭제</button>' : ''}
         <button id="detail" class="ghost sm">${detail ? '🙈 항목 간단히' : '👁 항목 자세히 보기'}</button>
       </div>
       <label class="sm row">전체 상태 <select id="allStatus" style="width:auto;flex:none"><option value="">선택</option><option>작성중</option><option>확정</option><option>지급완료</option></select></label>
@@ -1045,6 +1051,13 @@ async function renderPayroll() {
     const w = document.createElement('div'); w.className = 'modal';
     w.innerHTML = `<div class="modalBox">${slipHtml(slipData(month, payDate, p, rows[p.uid]))}<div class="row"><button class="primary" id="closeM">닫기</button></div></div>`;
     document.body.appendChild(w); w.onclick = (ev) => { if (ev.target === w || ev.target.id === 'closeM') w.remove(); };
+  });
+  document.getElementById('delMonth')?.addEventListener('click', async () => {
+    if (!confirm(`${monthTitle(month)} 급여 내용을 모두 지울까요?\n직원들에게 공개된 이 달 급여명세서도 함께 지워지고, 되돌릴 수 없어요.`)) return;
+    const slips = await getDocs(collection(db, 'payslips'));
+    for (const d of slips.docs) if (d.id.startsWith(month + '_')) await deleteDoc(d.ref);
+    await deleteDoc(ref);
+    toast('삭제했어요'); go('payroll', { month, detail });
   });
   document.getElementById('copyPrev').onclick = async () => {
     const p = await getDoc(doc(db, 'payroll', shift(-1)));
@@ -1150,61 +1163,272 @@ async function renderMySlips() {
   document.getElementById('print')?.addEventListener('click', () => window.print());
 }
 
-async function renderSchedule(head, bindTabs) {
+// ---------- 근무표 (달력 / 표) ----------
+// 우리 치과 근무표 형식: 그날 '연차' / '비번(주휴)' / '야간빠짐(월요일 야간 오프)' 인 사람을 표시
+const LEGACY = { '휴무': '비번', '야간': '야간빠짐', '오전': '반차', '오후': '반차' };
+const codeOf = (c) => LEGACY[c] || c || '';
+const LINES = [['연차', ['연차', '반차', '시간차']], ['비번', ['비번']], ['야간빠짐', ['야간빠짐']]];
+const HOLIDAYS = {
+  '2026-01-01': '신정', '2026-02-16': '설날', '2026-02-17': '설날', '2026-02-18': '설날', '2026-03-01': '삼일절', '2026-03-02': '대체공휴일',
+  '2026-05-05': '어린이날', '2026-05-24': '부처님 오신 날', '2026-05-25': '대체공휴일', '2026-06-03': '지방선거', '2026-06-06': '현충일',
+  '2026-08-15': '광복절', '2026-08-17': '대체공휴일', '2026-09-24': '추석', '2026-09-25': '추석', '2026-09-26': '추석', '2026-10-03': '개천절',
+  '2026-10-05': '대체공휴일', '2026-10-09': '한글날', '2026-12-25': '성탄절',
+  '2027-01-01': '신정', '2027-02-06': '설날', '2027-02-07': '설날', '2027-02-08': '설날', '2027-02-09': '설날 대체공휴일', '2027-03-01': '삼일절',
+  '2027-05-01': '근로자의 날', '2027-05-03': '근로자의 날 대체공휴일', '2027-05-05': '어린이날', '2027-05-13': '부처님 오신 날', '2027-06-06': '현충일',
+  '2027-07-17': '제헌절', '2027-07-19': '제헌절 대체공휴일', '2027-08-15': '광복절', '2027-08-16': '광복절 대체공휴일', '2027-09-14': '추석',
+  '2027-09-15': '추석', '2027-09-16': '추석', '2027-10-03': '개천절', '2027-10-04': '개천절 대체공휴일', '2027-10-09': '한글날',
+  '2027-10-11': '한글날 대체공휴일', '2027-12-25': '성탄절', '2027-12-27': '성탄절 대체공휴일'
+};
+
+async function renderSchedule() {
   const now = new Date();
   const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const mode = sub?.mode || 'cal';
   const [y, m] = month.split('-').map(Number);
   const last = new Date(y, m, 0).getDate();
   const ref = doc(db, 'schedules', month);
   const snap = await getDoc(ref);
-  const data = snap.exists() ? snap.data() : { people: [], cells: {} };
-  data.cells ||= {}; data.people ||= [];
+  const data = snap.exists() ? snap.data() : { people: [], cells: {}, holidays: {} };
+  data.cells ||= {}; data.people ||= []; data.holidays ||= {};
+  Object.values(data.cells).forEach((c) => Object.keys(c).forEach((d) => { c[d] = codeOf(c[d]); }));
   const editor = canApprove();
-  if (editor) {   // 현재 재직자로 명단 맞추기
+  const org = await loadOrg();
+  const order = orgOrder(org);
+  let seeded = false;
+  if (editor) {   // 재직자로 명단 맞추기
     const act = (await loadPeople()).filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
     act.forEach((p) => { const o = data.people.find((x) => x.uid === p.uid); if (o) { o.name = p.name; o.team = p.team || ''; } else data.people.push({ uid: p.uid, name: p.name, team: p.team || '' }); });
     data.people = data.people.filter((x) => act.some((p) => p.uid === x.uid) || Object.keys(data.cells[x.uid] || {}).length);
   }
-  data.people.sort((a, b) => (a.team || '').localeCompare(b.team || '', 'ko') || a.name.localeCompare(b.name, 'ko'));
+  // 조직도 순서로 정렬 + 그룹
+  const rank = (name) => { const i = order.findIndex((o) => o.name === name); return i < 0 ? 999 : i; };
+  const groupOf = (name) => order.find((o) => o.name === name) || { group: '기타', doctor: false, gi: 999 };
+  data.people.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name, 'ko'));
   const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
-  const DOW = '일월화수목금토';
-  let stamp = sub?.stamp ?? '휴무';
-  let dirty = false;
+  const hol = (d) => data.holidays[d] || HOLIDAYS[`${month}-${pad(d)}`] || '';
+  const nameOf = (uid) => data.people.find((p) => p.uid === uid)?.name || '';
+  const saveAll = async () => { await setDoc(ref, { people: data.people, cells: data.cells, holidays: data.holidays, updatedAt: serverTimestamp(), updatedBy: me.name }); };
 
-  const cellHtml = (uid, d) => { const c = data.cells[uid]?.[d] || ''; return `<td data-u="${uid}" data-d="${d}" class="c ${c ? 'k-' + c : ''} ${new Date(y, m - 1, d).getDay() === 0 ? 'sun' : ''}">${c}</td>`; };
-  shell(`${head}
+  const head = `
+    <div class="row between"><div><p class="eyebrow">SCHEDULE</p><h1>근무표</h1></div>
+      <div class="chips seg2"><button data-mode="cal" class="${mode === 'cal' ? 'on' : ''}">📅 달력</button><button data-mode="table" class="${mode === 'table' ? 'on' : ''}">📋 표</button></div></div>
     <div class="row between month"><button id="prev" class="ghost">◀</button><b>${y}년 ${m}월</b><button id="next" class="ghost">▶</button></div>
-    ${editor ? `<div class="chips stamps">${STAMPS.map(([k, t]) => `<button data-s="${k}" class="${stamp === k ? 'on' : ''} ${k ? 'k-' + k : ''}">${t}</button>`).join('')}</div>
-      <p class="muted sm">도장을 고르고 칸을 누르세요. 빈칸은 정상 근무예요.</p>` : ''}
-    <div class="sched"><table>
-      <tr><th class="nm">이름</th>${Array.from({ length: last }, (_, i) => { const dw = new Date(y, m - 1, i + 1).getDay(); return `<th class="${dw === 0 ? 'sun' : dw === 6 ? 'sat' : ''}">${i + 1}<br><small>${DOW[dw]}</small></th>`; }).join('')}</tr>
-      ${data.people.map((p) => `<tr class="${p.uid === me.uid ? 'mine' : ''}"><th class="nm">${esc(p.name)}${p.team ? `<small>${esc(p.team)}</small>` : ''}</th>${Array.from({ length: last }, (_, i) => cellHtml(p.uid, i + 1)).join('')}</tr>`).join('')
-        || `<tr><td class="muted" colspan="${last + 1}">아직 근무표가 없어요.</td></tr>`}
-    </table></div>
-    ${editor ? '<div class="row"><button id="saveSched" class="primary">근무표 저장</button><span class="muted sm" id="dirty"></span></div>' : ''}`);
-  bindTabs();
-  const leave = (fn) => () => { if (dirty && !confirm('저장하지 않은 변경이 있어요. 이동할까요?')) return; fn(); };
-  document.getElementById('prev').onclick = leave(() => go('work', { tab: 'schedule', month: shift(-1), stamp }));
-  document.getElementById('next').onclick = leave(() => go('work', { tab: 'schedule', month: shift(1), stamp }));
-  $app.querySelectorAll('[data-t]').forEach((b) => b.onclick = leave(() => go('work', { tab: b.dataset.t })));
-  if (!editor) return;
-  $app.querySelectorAll('.stamps button').forEach((b) => b.onclick = () => {
-    stamp = b.dataset.s; $app.querySelectorAll('.stamps button').forEach((x) => x.classList.toggle('on', x === b));
+    ${seeded ? `<div class="card warn sm row between"><span>📥 근무표2027 시트에 입력돼 있던 ${y}년 ${m}월 내용을 불러왔어요. 확인 후 저장해 주세요.</span><button id="saveSeed" class="primary sm">저장</button></div>` : ''}`;
+
+  if (mode === 'cal') {
+    const first = new Date(y, m - 1, 1).getDay();
+    const cells = [];
+    for (let i = 0; i < first; i++) cells.push(null);
+    for (let d = 1; d <= last; d++) cells.push(d);
+    while (cells.length % 7) cells.push(null);
+    const dayHtml = (d) => {
+      if (!d) return '<td class="cd out"></td>';
+      const dw = new Date(y, m - 1, d).getDay(), h = hol(d);
+      const lines = LINES.map(([label, codes]) => {
+        const ns = data.people.filter((p) => codes.includes(codeOf(data.cells[p.uid]?.[d])));
+        if (!ns.length) return '';
+        return `<div class="ln l-${label}"><span>${label}</span>${ns.map((p) => { const c = codeOf(data.cells[p.uid][d]); return `<em class="${p.uid === me.uid ? 'mine' : ''}">${esc(p.name)}${c === '반차' ? '(반)' : c === '시간차' ? '(시)' : ''}</em>`; }).join('')}</div>`;
+      }).join('');
+      return `<td class="cd ${dw === 0 ? 'sun' : dw === 6 ? 'sat' : ''} ${h ? 'hol' : ''} ${editor ? 'edit' : ''}" data-day="${d}">
+        <div class="dn"><b>${d}</b>${h ? `<small>${esc(h)}</small>` : ''}</div>${dw === 0 && !lines ? '<div class="muted sm closed">휴진</div>' : lines}</td>`;
+    };
+    shell(`${head}
+      <div class="calWrap"><table class="cal"><tr>${'일월화수목금토'.split('').map((w, i) => `<th class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</th>`).join('')}</tr>
+        ${Array.from({ length: cells.length / 7 }, (_, w) => `<tr>${cells.slice(w * 7, w * 7 + 7).map(dayHtml).join('')}</tr>`).join('')}</table></div>
+      <div class="legend sm"><span class="ln l-연차"><span>연차</span></span> (반)=반차 (시)=시간차 <span class="ln l-비번"><span>비번</span></span> 주휴 <span class="ln l-야간빠짐"><span>야간빠짐</span></span> 월요일 야간 오프
+        ${editor ? ' · <b>날짜를 누르면 쉬는 사람을 넣을 수 있어요.</b>' : ''}</div>`);
+  } else {
+    let stamp = sub?.stamp ?? '비번';
+    const DOW = '일월화수목금토';
+    const STAMPS2 = [['', '근무'], ['비번', '비번'], ['연차', '연차'], ['반차', '반차'], ['시간차', '시간차'], ['야간빠짐', '야간빠짐']];
+    const cellHtml = (uid, d) => { const c = codeOf(data.cells[uid]?.[d]); return `<td data-u="${uid}" data-d="${d}" class="c ${c ? 'k-' + c : ''} ${new Date(y, m - 1, d).getDay() === 0 ? 'sun' : ''} ${hol(d) ? 'hol' : ''}">${c === '야간빠짐' ? '야간' : c}</td>`; };
+    let lastG = null;
+    const rows = data.people.map((p) => {
+      const g = groupOf(p.name);
+      const sep = g.group !== lastG ? `<tr class="grp ${g.doctor ? 'doc' : ''}"><th class="nm" colspan="${last + 1}">${esc(g.group)}</th></tr>` : '';
+      lastG = g.group;
+      return sep + `<tr class="${p.uid === me.uid ? 'mine' : ''}"><th class="nm">${esc(p.name)}</th>${Array.from({ length: last }, (_, i) => cellHtml(p.uid, i + 1)).join('')}</tr>`;
+    }).join('');
+    shell(`${head}
+      ${editor ? `<div class="chips stamps">${STAMPS2.map(([k, t]) => `<button data-s="${k}" class="${stamp === k ? 'on' : ''} ${k ? 'k-' + k : ''}">${t}</button>`).join('')}</div>
+        <p class="muted sm">도장을 고르고 칸을 누르세요. 빈칸은 정상 근무예요.</p>` : ''}
+      <div class="sched"><table>
+        <tr><th class="nm">이름</th>${Array.from({ length: last }, (_, i) => { const dw = new Date(y, m - 1, i + 1).getDay(); return `<th class="${dw === 0 || hol(i + 1) ? 'sun' : dw === 6 ? 'sat' : ''}" title="${esc(hol(i + 1))}">${i + 1}<br><small>${DOW[dw]}</small></th>`; }).join('')}</tr>
+        ${rows || `<tr><td class="muted" colspan="${last + 1}">아직 근무표가 없어요.</td></tr>`}
+      </table></div>
+      ${editor ? '<div class="row"><button id="saveSched" class="primary">근무표 저장</button><span class="muted sm" id="dirty"></span></div>' : ''}`);
+    if (editor) {
+      $app.querySelectorAll('.stamps button').forEach((b) => b.onclick = () => { stamp = b.dataset.s; $app.querySelectorAll('.stamps button').forEach((x) => x.classList.toggle('on', x === b)); });
+      const bindCell = (td) => td.onclick = () => {
+        const { u, d } = td.dataset;
+        data.cells[u] ||= {};
+        const next = codeOf(data.cells[u][d]) === stamp ? '' : stamp;
+        if (next) data.cells[u][d] = next; else delete data.cells[u][d];
+        td.outerHTML = cellHtml(u, Number(d));
+        bindCell($app.querySelector(`td[data-u="${u}"][data-d="${d}"]`));
+        document.getElementById('dirty').textContent = '저장 안 된 변경 있음';
+      };
+      $app.querySelectorAll('td.c').forEach(bindCell);
+      document.getElementById('saveSched').onclick = async () => { await saveAll(); toast('근무표를 저장했어요'); document.getElementById('dirty').textContent = ''; };
+    }
+  }
+
+  // 공통 버튼
+  const cur = { month, mode };
+  $app.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => go('work', { tab: 'schedule', month, mode: b.dataset.mode }));
+  document.getElementById('prev').onclick = () => go('work', { tab: 'schedule', ...cur, month: shift(-1) });
+  document.getElementById('next').onclick = () => go('work', { tab: 'schedule', ...cur, month: shift(1) });
+  document.getElementById('saveSeed')?.addEventListener('click', async () => { await saveAll(); toast('저장했어요'); go('work', { tab: 'schedule', ...cur }); });
+
+  // 달력에서 날짜 누르면 편집 창
+  if (editor && mode === 'cal') $app.querySelectorAll('td.cd[data-day]').forEach((td) => td.onclick = () => {
+    const d = Number(td.dataset.day);
+    const dw = '일월화수목금토'[new Date(y, m - 1, d).getDay()];
+    const sel = {};   // uid → code
+    data.people.forEach((p) => { const c = codeOf(data.cells[p.uid]?.[d]); if (c) sel[p.uid] = c; });
+    const w = document.createElement('div'); w.className = 'modal';
+    const groups = [];
+    data.people.forEach((p) => { const g = groupOf(p.name).group; let x = groups.find((q) => q.g === g); if (!x) groups.push(x = { g, ps: [] }); x.ps.push(p); });
+    const drawM = () => {
+      w.innerHTML = `<div class="modalBox">
+        <h2>${m}월 ${d}일 (${dw})</h2>
+        <label class="sm">휴일 이름 (비우면 기본 공휴일)<input id="holName" value="${esc(data.holidays[d] || '')}" placeholder="${esc(HOLIDAYS[`${month}-${pad(d)}`] || '예: 원내 휴진, 여름휴가')}"></label>
+        ${[['연차', '연차'], ['반차', '반차'], ['시간차', '시간차'], ['비번', '비번 (주휴)'], ['야간빠짐', '야간빠짐 (월요일 야간 오프)']].map(([code, label]) => `
+          <div class="pick"><b class="ln l-${LINES.find((l) => l[1].includes(code))[0]}"><span>${label}</span></b>
+            <div class="pickG">${groups.map((g) => `<div><small class="muted">${esc(g.g)}</small>${g.ps.map((p) => `<button data-p="${p.uid}" data-c="${code}" class="chip ${sel[p.uid] === code ? 'on' : ''}">${esc(p.name)}</button>`).join('')}</div>`).join('')}</div></div>`).join('')}
+        <div class="row"><button id="applyM" class="primary">저장</button><button id="closeM" class="ghost">닫기</button></div></div>`;
+      w.querySelectorAll('[data-p]').forEach((b) => b.onclick = () => { const { p, c } = b.dataset; sel[p] = sel[p] === c ? undefined : c; const hv = w.querySelector('#holName').value; drawM(); w.querySelector('#holName').value = hv; });
+      w.querySelector('#closeM').onclick = () => w.remove();
+      w.querySelector('#applyM').onclick = async () => {
+        data.people.forEach((p) => { data.cells[p.uid] ||= {}; if (sel[p.uid]) data.cells[p.uid][d] = sel[p.uid]; else delete data.cells[p.uid][d]; });
+        const hn = w.querySelector('#holName').value.trim(); if (hn) data.holidays[d] = hn; else delete data.holidays[d];
+        await saveAll(); w.remove(); toast('저장했어요'); go('work', { tab: 'schedule', ...cur });
+      };
+    };
+    drawM(); document.body.appendChild(w);
+    w.onclick = (ev) => { if (ev.target === w) w.remove(); };
   });
-  $app.querySelectorAll('td.c').forEach((td) => td.onclick = () => {
-    const { u, d } = td.dataset;
-    data.cells[u] ||= {};
-    const cur = data.cells[u][d] || '';
-    const next = cur === stamp ? '' : stamp;   // 같은 도장을 한 번 더 누르면 지워짐
-    if (next) data.cells[u][d] = next; else delete data.cells[u][d];
-    td.outerHTML = cellHtml(u, Number(d));
-    dirty = true; document.getElementById('dirty').textContent = '저장 안 된 변경 있음';
-    const nt = $app.querySelector(`td[data-u="${u}"][data-d="${d}"]`); nt.onclick = td.onclick;
-  });
-  document.getElementById('saveSched').onclick = async () => {
-    await setDoc(ref, { people: data.people, cells: data.cells, updatedAt: serverTimestamp(), updatedBy: me.name });
-    dirty = false; toast('근무표를 저장했어요'); document.getElementById('dirty').textContent = '';
+}
+
+// ---------- 조직도 ----------
+// 직원 이름 등 개인 정보는 코드에 넣지 않음 — 관리자가 입력하거나 올린 파일 내용만 Firebase(로그인 필요)에 저장
+const DEFAULT_ORG = { groups: [{ name: '원장', doctor: true, members: [] }] };
+async function loadOrg() {
+  const d = await getDoc(doc(db, 'org', 'main'));
+  return d.exists() ? d.data() : JSON.parse(JSON.stringify(DEFAULT_ORG));
+}
+// 근무표·명단 순서: 조직도 순서 그대로
+function orgOrder(org) {
+  const out = [];
+  (org.groups || []).forEach((g, gi) => (g.members || []).forEach((m) => out.push({ name: m.name, group: g.name, doctor: !!g.doctor, gi })));
+  return out;
+}
+
+// 조직도·근무표·연차 규칙 자료 파일(.json) 불러오기 — 직원 정보는 코드가 아니라 로그인해야 볼 수 있는 Firebase에만 저장
+async function importInitFile(file) {
+  if (!file) return;
+  let init;
+  try { init = JSON.parse(await file.text()); } catch { return alert('파일을 읽지 못했어요.'); }
+  if (init.type !== 'plaire-portal-init') return alert('직원포털 자료 파일이 아니에요.');
+  const months = Object.keys(init.schedules || {});
+  if (!confirm(`이 파일로 다음을 채울까요?\n· 조직도 ${orgOrder(init.org).length}명\n· 근무표 ${months.length}개월 (${months.join(', ')})${init.leaveRules ? '\n· 연차 사용 규칙 (비어 있을 때만)' : ''}\n\n지금 조직도는 파일 내용으로 바뀌어요.`)) return;
+  let people = await loadPeople();
+  const missing = orgOrder(init.org).filter((x) => !people.some((p) => p.name === x.name && p.status !== 'rejected'));
+  for (const x of missing) {
+    const grp = init.org.groups.find((g) => g.name === x.group); const m = grp.members.find((y) => y.name === x.name);
+    await addDoc(collection(db, 'users'), { name: x.name, job: m.title || '', dept: grp.name, team: /팀/.test(grp.name) ? grp.name : '', role: grp.doctor ? 'doctor' : 'staff',
+      phone: '', email: '', hireDate: '', work: '재직', annualAdjust: 0, status: 'roster', createdAt: serverTimestamp() });
+  }
+  if (missing.length) people = await loadPeople();
+  await setDoc(doc(db, 'org', 'main'), { groups: init.org.groups, updatedAt: serverTimestamp(), updatedBy: me.name });
+  for (const month of months) {
+    const ref = doc(db, 'schedules', month);
+    const cur = (await getDoc(ref)).data() || { people: [], cells: {}, holidays: {} };
+    cur.people ||= []; cur.cells ||= {}; cur.holidays ||= {};
+    Object.entries(init.schedules[month]).forEach(([name, days]) => {
+      const p = people.find((x) => x.name === name && x.status !== 'rejected'); if (!p) return;
+      if (!cur.people.some((x) => x.uid === p.uid)) cur.people.push({ uid: p.uid, name: p.name, team: p.team || '' });
+      cur.cells[p.uid] = { ...(cur.cells[p.uid] || {}), ...days };
+    });
+    await setDoc(ref, cur);
+  }
+  if (init.leaveRules && !(await getDoc(doc(db, 'settings', 'leaveRules'))).exists())
+    await setDoc(doc(db, 'settings', 'leaveRules'), { text: init.leaveRules, updatedAt: serverTimestamp(), updatedBy: me.name });
+  toast(`불러왔어요${missing.length ? ` · 명부에 ${missing.length}명 추가` : ''}`); go('org');
+}
+
+async function renderOrg() {
+  const org = await loadOrg();
+  const editing = sub?.edit && can.editManual();
+  const total = (org.groups || []).reduce((s, g) => s + (g.members || []).length, 0);
+  if (!editing) {
+    const doctors = org.groups.filter((g) => g.doctor), rest = org.groups.filter((g) => !g.doctor);
+    const person = (m) => `<div class="op"><div><b>${esc(m.name)}</b>${m.title ? `<span class="tag">${esc(m.title)}</span>` : ''}</div>
+      ${m.rr ? `<p>${esc(m.rr)}</p>` : ''}${m.duty ? `<p class="muted">🔧 ${esc(m.duty)}</p>` : ''}${m.backup ? `<p class="muted">🤝 휴무 시 인계: ${esc(m.backup)}</p>` : ''}</div>`;
+    const group = (g) => `<div class="og ${g.doctor ? 'doc' : ''}"><div class="ogh">${esc(g.name)} <small>${(g.members || []).length}명</small></div>${(g.members || []).map(person).join('')}</div>`;
+    shell(`
+      <div class="row between"><div><p class="eyebrow">ORGANIZATION</p><h1>조직도</h1><p class="muted sm">총 ${total}명 · 근무표에도 이 순서대로 보여요.</p></div>
+        <div class="row">${me.role === 'admin' ? '<label class="upload ghostUp">📥 자료 파일 불러오기<input type="file" id="initFile" accept=".json" hidden></label>' : ''}
+        ${can.editManual() ? '<button id="edit" class="primary">✏️ 조직도 편집</button>' : ''}</div></div>
+      ${!total ? '<div class="card sm muted">아직 조직도가 비어 있어요. 관리자가 "자료 파일 불러오기"로 받은 파일을 올리거나 "조직도 편집"에서 직접 입력해 주세요.</div>' : ''}
+      <div class="orgTop">${brand('small')}</div>
+      ${doctors.length ? `<div class="orgRow center">${doctors.map(group).join('')}</div><div class="orgLine"></div>` : ''}
+      <div class="orgGrid">${rest.map(group).join('')}</div>`);
+    document.getElementById('edit')?.addEventListener('click', () => go('org', { edit: true }));
+    document.getElementById('initFile')?.addEventListener('change', (e) => importInitFile(e.target.files[0]));
+    return;
+  }
+
+  const people = await loadPeople();
+  const g = JSON.parse(JSON.stringify(org.groups || []));
+  const draw = () => {
+    shell(`
+      <div class="row between"><div><p class="eyebrow">ORGANIZATION</p><h1>조직도 편집</h1>
+        <p class="muted sm">칸에 바로 입력하세요. ↑↓로 순서를 바꾸면 근무표 순서도 같이 바뀌어요.</p></div>
+        <div class="row"><button id="cancel" class="ghost">취소</button><button id="saveOrg" class="primary">저장</button></div></div>
+      <datalist id="names">${people.filter((p) => ['active', 'roster'].includes(p.status)).map((p) => `<option value="${esc(p.name)}">`).join('')}</datalist>
+      ${g.map((grp, gi) => `
+        <section class="card oe">
+          <div class="row"><input class="gname" data-g="${gi}" value="${esc(grp.name)}" placeholder="부서·팀 이름">
+            <label class="sm row"><input type="checkbox" data-doc="${gi}" ${grp.doctor ? 'checked' : ''}> 원장(맨 위)</label>
+            <button data-gu="${gi}" class="ghost sm">↑</button><button data-gd="${gi}" class="ghost sm">↓</button><button data-gx="${gi}" class="ghost sm danger">부서 삭제</button></div>
+          <div class="tbl"><table class="oeT"><tr><th></th><th>이름</th><th>직급</th><th>R&R (역할)</th><th>담당 업무</th><th>휴무 시 인계</th><th></th></tr>
+            ${(grp.members || []).map((m, mi) => `<tr>
+              <td class="nowrap"><button data-mu="${gi}:${mi}" class="ghost sm">↑</button><button data-md="${gi}:${mi}" class="ghost sm">↓</button></td>
+              ${['name', 'title', 'rr', 'duty', 'backup'].map((k) => `<td><input data-m="${gi}:${mi}:${k}" value="${esc(m[k] || '')}" ${k === 'name' ? 'list="names"' : ''}></td>`).join('')}
+              <td><button data-mx="${gi}:${mi}" class="ghost sm danger">✕</button></td></tr>`).join('')}
+          </table></div>
+          <button data-ma="${gi}" class="ghost sm">＋ 사람 추가</button>
+        </section>`).join('')}
+      <button id="addG" class="ghost">＋ 부서·팀 추가</button>`);
+    const sw = (arr, i, j) => { if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; draw(); };
+    $app.querySelectorAll('.gname').forEach((el) => el.oninput = () => { g[el.dataset.g].name = el.value; });
+    $app.querySelectorAll('[data-doc]').forEach((el) => el.onchange = () => { g[el.dataset.doc].doctor = el.checked; });
+    $app.querySelectorAll('[data-m]').forEach((el) => el.oninput = () => { const [gi, mi, k] = el.dataset.m.split(':'); g[gi].members[mi][k] = el.value; });
+    $app.querySelectorAll('[data-gu]').forEach((b) => b.onclick = () => sw(g, +b.dataset.gu, +b.dataset.gu - 1));
+    $app.querySelectorAll('[data-gd]').forEach((b) => b.onclick = () => sw(g, +b.dataset.gd, +b.dataset.gd + 1));
+    $app.querySelectorAll('[data-gx]').forEach((b) => b.onclick = () => { if (confirm('이 부서를 지울까요?')) { g.splice(+b.dataset.gx, 1); draw(); } });
+    $app.querySelectorAll('[data-mu]').forEach((b) => b.onclick = () => { const [gi, mi] = b.dataset.mu.split(':').map(Number); sw(g[gi].members, mi, mi - 1); });
+    $app.querySelectorAll('[data-md]').forEach((b) => b.onclick = () => { const [gi, mi] = b.dataset.md.split(':').map(Number); sw(g[gi].members, mi, mi + 1); });
+    $app.querySelectorAll('[data-mx]').forEach((b) => b.onclick = () => { const [gi, mi] = b.dataset.mx.split(':').map(Number); g[gi].members.splice(mi, 1); draw(); });
+    $app.querySelectorAll('[data-ma]').forEach((b) => b.onclick = () => { (g[+b.dataset.ma].members ||= []).push({ name: '', title: '', rr: '', duty: '', backup: '' }); draw(); });
+    document.getElementById('addG').onclick = () => { g.push({ name: '새 부서', members: [] }); draw(); };
+    document.getElementById('cancel').onclick = () => go('org');
+    document.getElementById('saveOrg').onclick = async () => {
+      g.forEach((grp) => grp.members = (grp.members || []).filter((m) => m.name.trim()).map((m) => ({ ...m, name: m.name.trim() })));
+      const missing = orgOrder({ groups: g }).map((x) => x.name).filter((n) => !people.some((p) => p.name === n && p.status !== 'rejected'));
+      if (missing.length && me.role === 'admin' && confirm(`회원 명부에 없는 이름이 있어요: ${missing.join(', ')}\n명부(미가입)에 추가할까요? 추가해야 근무표에 나와요.`)) {
+        for (const n of missing) {
+          const grp = g.find((x) => x.members.some((m) => m.name === n)); const m = grp.members.find((x) => x.name === n);
+          await addDoc(collection(db, 'users'), { name: n, job: m.title || '', dept: grp.name, team: /팀/.test(grp.name) ? grp.name : '', role: grp.doctor ? 'doctor' : 'staff',
+            phone: '', email: '', hireDate: '', work: '재직', annualAdjust: 0, status: 'roster', createdAt: serverTimestamp() });
+        }
+      }
+      await setDoc(doc(db, 'org', 'main'), { groups: g, updatedAt: serverTimestamp(), updatedBy: me.name });
+      toast('조직도를 저장했어요'); go('org');
+    };
   };
+  draw();
 }
 
 // ---------- 보안정책 ----------

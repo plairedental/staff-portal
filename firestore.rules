@@ -35,9 +35,9 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 화면 설정: 로그인 화면에서도 보여야 해서 누구나 읽기, 관리자만 수정
+    // 화면 설정(app)은 로그인 화면에서도 보여야 해서 누구나 읽기, 나머지(연차 규칙 등)는 승인된 직원만. 수정은 관리자만
     match /settings/{id} {
-      allow read: if true;
+      allow read: if id == 'app' || active();
       allow write: if isAdmin();
     }
 
@@ -71,6 +71,12 @@ service cloud.firestore {
     match /payslips/{id} {
       allow read: if isAdmin() || (active() && resource.data.uid == request.auth.uid);
       allow write: if isAdmin();
+    }
+
+    // 조직도: 승인된 직원 모두 보기, 관리자·총괄실장 수정
+    match /org/{id} {
+      allow read: if active();
+      allow write: if hasRole(['admin', 'chief']);
     }
 
     // 매뉴얼: 승인된 직원 모두 읽기, 관리자·총괄실장 수정
