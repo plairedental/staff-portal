@@ -243,3 +243,24 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--c2); }
   body, main { background: #fff; padding: 0; margin: 0; max-width: none; }
   .card.slipCard { border: none; padding: 0; }
 }
+
+/* 좌측 메뉴: 위(카테고리) / 아래(내 계정·관리자 메뉴) */
+aside.side { display: flex; flex-direction: column; }
+.sideTop, .sideBottom { display: flex; flex-direction: column; }
+.sideBottom { margin-top: auto; padding-top: .8rem; border-top: 1px solid var(--line); }
+.sideBottom .sideTitle { margin-top: .5rem; }
+.stamp { font-size: .8rem; color: var(--c); background: var(--c2); border-radius: 99px; padding: .3rem .7rem; white-space: nowrap; }
+.hist { border-top: 1px dashed var(--line); padding-top: .6rem; margin-top: .4rem; }
+.hist div { display: grid; grid-template-columns: 7rem 1fr auto; gap: .5rem; padding: .25rem 0; }
+.secCard { padding: 1.6rem 2rem; }
+.sec { padding: 1rem 0 1.2rem; border-bottom: 1px solid var(--line); }
+.sec:last-child { border-bottom: none; }
+.sec h2, .secH { color: var(--c); font-size: 1.25rem; margin-bottom: .8rem; }
+.sec p { margin: .35rem 0; color: #555; }
+.qa { margin: 1.3rem 0; } .qa b { font-size: 1.02rem; } .qa p { margin: .4rem 0 0; color: #666; }
+@media (max-width: 760px) {
+  aside.side { flex-direction: row; }
+  .sideTop, .sideBottom { flex-direction: row; gap: .3rem; }
+  .sideBottom { margin: 0; padding: 0 0 0 .4rem; border-top: none; border-left: 2px solid var(--line); }
+  .secCard { padding: 1rem; }
+}

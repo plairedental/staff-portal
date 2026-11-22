@@ -5,7 +5,7 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function myPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
     function me() { return get(myPath()).data; }
-    function active() { return signedIn() && exists(myPath()) && me().status == 'active'; }
+    function active() { return signedIn() && exists(myPath()) && me().status == 'active' && me().get('work', '재직') != '퇴사'; }
     function hasRole(r) { return active() && me().role in r; }
     function isAdmin() { return hasRole(['admin']); }
 

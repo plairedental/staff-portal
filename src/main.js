@@ -144,12 +144,13 @@ function renderAuth(mode = 'login', msg = '') {
 }
 
 function renderWaiting() {
-  const rejected = me.status === 'rejected';
+  const quit = me.status === 'active' && me.work === '퇴사';
+  const rejected = me.status === 'rejected' || quit;
   $app.innerHTML = `
     <div class="auth">
       ${brand()}
       <div class="card center">
-        <p class="big">${rejected ? '가입이 승인되지 않았어요.' : '가입 신청이 완료됐어요.'}</p>
+        <p class="big">${quit ? '퇴사 처리된 계정이에요.' : rejected ? '가입이 승인되지 않았어요.' : '가입 신청이 완료됐어요.'}</p>
         <p>${rejected ? '관리자에게 문의해 주세요.' : '관리자가 승인하면 바로 사용할 수 있어요.<br>승인 후 이 화면을 새로고침해 주세요.'}</p>
         <button id="reload" class="primary">새로고침</button>
         <button id="out" class="ghost">로그아웃</button>
@@ -167,21 +168,34 @@ function categories() {
       ['perf', '성과·인센티브', '📈', '팀별 목표 매출과 인센티브를 확인해요. (준비 중)']
     ] },
     { key: 'hr', label: '인사관리', icon: '👥', items: [
-      ['my', '내 정보', '👤', '내 기본정보, 급여, 글씨 크기를 확인해요.'],
-      ['hr', '직원 명부', '📇', '직원 정보와 가입 승인을 관리해요.', can.hr],
       ['work:schedule', '근무표', '🗓️', '월별 근무·휴무 일정을 확인해요.'],
       ['work:leave', '내 연차', '🌴', '연차를 신청하고 남은 일수를 확인해요.'],
-      ['work:all', '직원 연차 현황', '📋', '직원 전체의 연차 사용 내역을 확인해요.', canApprove],
-      ['slips', '급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.'],
-      ['payroll', '급여 관리', '💰', '월별 급여와 총 인건비를 한눈에 봐요.', () => me.role === 'admin']
+      ['slips', '급여명세서', '🧾', '매달 내 급여명세서를 확인하고 인쇄해요.']
     ] },
     { key: 'manual', label: '원내매뉴얼', icon: '📘', items: [
-      ['manual', '매뉴얼 목록', '📘', '원내 업무 매뉴얼을 찾아봐요.'],
-      ['manual:new', '새 매뉴얼 쓰기', '✏️', '새 매뉴얼을 작성해요.', can.editManual]
+      ['manual', '매뉴얼 목록', '📘', '원내 업무 매뉴얼을 찾아봐요.']
     ] }
   ].filter((c) => !c.show || c.show())
    .map((c) => ({ ...c, items: c.items.filter((i) => !i[4] || i[4]()) }));
 }
+// 좌측 아래 고정 메뉴: 내 계정 + 권한 있는 사람만 보는 관리 메뉴
+function bottomGroups() {
+  const f = (items) => items.filter((i) => !i[4] || i[4]());
+  return [
+    { label: '내 계정', icon: '👤', items: f([
+      ['my', '마이페이지', '👤', '내 기본정보, 연봉, 글씨 크기를 확인해요.'],
+      ['security', '보안정책', '🛡️', '내 정보가 어떻게 보호되는지 확인해요.']
+    ]) },
+    { label: '관리자 메뉴', icon: '🔒', items: f([
+      ['hr', '회원관리', '👥', '직원 정보, 연봉, 가입 승인을 관리해요.', can.hr],
+      ['work:all', '직원 연차 현황', '📋', '직원 전체의 연차 사용 내역을 확인해요.', canApprove],
+      ['payroll', '급여 관리', '💰', '월별 급여대장과 총 인건비를 봐요.', () => me.role === 'admin'],
+      ['manual:new', '매뉴얼 작성', '✏️', '새 매뉴얼을 작성해요.', can.editManual],
+      ['settings', '화면 설정', '🎨', '글씨체, 색상, 로고를 바꿔요.', () => me.role === 'admin']
+    ]) }
+  ].filter((g) => g.items.length);
+}
+let lastCat = 'hr';
 const curKey = () => view === 'work' ? 'work:' + (sub?.tab || 'schedule') : (view === 'manual' && sub?.edit === null ? 'manual:new' : view);
 const catOf = (key) => categories().find((c) => c.items.some((i) => i[0] === key));
 function goKey(key) {
@@ -195,35 +209,41 @@ function goKey(key) {
 function shell(content) {
   const cats = categories();
   const key = curKey();
-  const cat = catOf(key);
+  const hit = catOf(key);
+  if (hit) lastCat = hit.key;
+  const cat = hit || cats.find((c) => c.key === lastCat) || cats[0];
+  const btn = ([k, t, i]) => `<button data-k="${k}" class="${key === k ? 'on' : ''}"><i>${i}</i>${t}</button>`;
   $app.innerHTML = `
     <header class="top">
       <a href="#" id="home" class="homeLink">${brand('small')}</a>
-      <nav class="cats">${cats.map((c) => `<button data-cat="${c.key}" class="${cat?.key === c.key ? 'on' : ''}"><i>${c.icon}</i>${c.label}</button>`).join('')}</nav>
+      <nav class="cats">${cats.map((c) => `<button data-cat="${c.key}" class="${hit?.key === c.key ? 'on' : ''}"><i>${c.icon}</i>${c.label}</button>`).join('')}</nav>
       <div class="who">
         <a href="#" id="me">${esc(me.name)} <small>${ROLES[me.role]}</small></a>
-        ${me.role === 'admin' ? `<button id="set" class="ghost sm ${view === 'settings' ? 'on' : ''}" title="화면 설정">🎨</button>` : ''}
         <button id="out" class="ghost sm">로그아웃</button>
       </div>
     </header>
-    <div class="body ${cat ? '' : 'noside'}">
-      ${cat ? `<aside class="side">
-        <div class="sideTitle">${cat.icon} ${cat.label}</div>
-        ${cat.items.map(([k, t, i]) => `<button data-k="${k}" class="${key === k ? 'on' : ''}"><i>${i}</i>${t}</button>`).join('')}
-      </aside>` : ''}
+    <div class="body">
+      <aside class="side">
+        <div class="sideTop">
+          <div class="sideTitle">${cat.icon} ${cat.label}</div>
+          ${cat.items.map(btn).join('')}
+        </div>
+        <div class="sideBottom">
+          ${bottomGroups().map((g) => `<div class="sideTitle">${g.icon} ${g.label}</div>${g.items.map(btn).join('')}`).join('')}
+        </div>
+      </aside>
       <main class="${['work:schedule', 'payroll', 'work:all'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => goKey(cats.find((c) => c.key === b.dataset.cat).items[0][0]));
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
   document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
   document.getElementById('me').onclick = (e) => { e.preventDefault(); go('my'); };
-  document.getElementById('set')?.addEventListener('click', () => go('settings'));
   document.getElementById('out').onclick = () => signOut(auth);
 }
 function go(v, s = null) { view = v; sub = s; render(); window.scrollTo(0, 0); }
 
 function renderHome() {
-  const cats = categories();
+  const cats = [...categories(), ...bottomGroups()];
   shell(`
     <div class="welcome">${theme.logo ? `<img src="${theme.logo}" alt="">` : `<span class="badge">${esc((theme.clinicName || '치')[0])}</span>`}
       <p><b>${esc(me.name)}</b> ${ROLES[me.role]}님,<br>${esc(theme.clinicName)}에 오신 것을 환영합니다.</p></div>
@@ -251,6 +271,7 @@ async function render() {
     if (view === 'perf' && me.role === 'admin') return renderPerf();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
     if (view === 'slips') return await renderMySlips();
+    if (view === 'security') return renderSecurity();
     if (view === 'my') return await renderMy();
     view = 'home'; return renderHome();
   } catch (e) {
@@ -278,7 +299,7 @@ async function renderMy() {
   const s = await getDoc(doc(db, 'salaries', me.uid));
   const sal = s.exists() ? s.data() : null;
   shell(`
-    <h1>내 정보</h1>
+    <p class="eyebrow">MY PAGE</p><h1>마이페이지</h1>
     <section class="card">${infoRows(me)}
       <div class="row"><input id="phone" value="${esc(me.phone)}" placeholder="연락처"><button id="savePhone">연락처 저장</button></div>
     </section>
@@ -290,10 +311,14 @@ async function renderMy() {
       <p class="muted sm">이 기기와 내 계정에만 적용돼요. '기본'은 관리자가 정한 크기예요.</p>
     </section>
     <section class="card">
-      <h2>급여</h2>
-      ${sal ? `<dl class="info"><dt>월 급여</dt><dd>${won(sal.monthly)}</dd>${sal.note ? `<dt>메모</dt><dd>${esc(sal.note)}</dd>` : ''}</dl>`
-            : '<p class="muted">아직 등록된 급여 정보가 없어요.</p>'}
-      <p class="muted sm">급여는 본인과 관리자만 볼 수 있어요.</p>
+      <h2>연봉</h2>
+      ${sal && (sal.annual || sal.monthly) ? `<dl class="info">
+        ${sal.annual ? `<dt>연봉</dt><dd>${won(sal.annual)}</dd>` : ''}
+        <dt>세전 월급여</dt><dd>${won(sal.annual ? Math.round(sal.annual / 12) : sal.monthly)}</dd>
+        ${sal.annualDate ? `<dt>적용(입력)일</dt><dd>${sal.annualDate}</dd>` : ''}
+        ${sal.note ? `<dt>메모</dt><dd>${esc(sal.note)}</dd>` : ''}</dl>`
+        : '<p class="muted">아직 등록된 연봉 정보가 없어요.</p>'}
+      <p class="muted sm">연봉은 본인과 관리자만 볼 수 있어요. 매달 급여명세서는 왼쪽 메뉴 "급여명세서"에서 확인하세요.</p>
     </section>`);
   document.getElementById('savePhone').onclick = async () => {
     await updateDoc(doc(db, 'users', me.uid), { phone: val('phone') });
@@ -463,14 +488,22 @@ async function renderPerson(uid) {
       ${f('annualAdjust', '연차 조정 (일, 예: 2 또는 -1)', p.annualAdjust ?? '', 'number')}
     </section>
     <section class="card form">
-      <h2>급여 <span class="muted sm">(본인과 관리자만 볼 수 있어요)</span></h2>
-      ${f('monthly', '월 급여 (원)', sal.monthly ?? '', 'number')}
-      ${f('note', '메모 (예: 세전, 식대 포함)', sal.note ?? '')}
+      <h2>연봉 <span class="muted sm">(본인과 관리자만 볼 수 있어요)</span></h2>
+      <label>연봉 (원)
+        <div class="row"><input id="annual" inputmode="numeric" value="${sal.annual ? comma(sal.annual) : ''}" placeholder="예: 36,000,000">
+          <span class="stamp">${sal.annualDate ? `📅 ${sal.annualDate} 입력${sal.annualBy ? ' · ' + esc(sal.annualBy) : ''}` : '아직 입력 안 됨'}</span></div></label>
+      <label>세전 월급여 (연봉 ÷ 12, 자동 계산)<input id="monthlyView" disabled value="${sal.annual ? comma(Math.round(sal.annual / 12)) + '원' : sal.monthly ? comma(sal.monthly) + '원' : ''}"></label>
+      ${f('note', '메모 (예: 식대 포함, 2026년 연봉협상)', sal.note ?? '')}
+      ${(sal.history || []).length ? `<div class="hist"><b class="sm">연봉 변경 이력</b>
+        ${[...sal.history].reverse().map((h) => `<div class="sm"><span>${h.date}</span><span>${comma(h.annual)}원</span><span class="muted">${esc(h.by || '')}</span></div>`).join('')}</div>` : ''}
     </section>
     <div class="row"><button id="save" class="primary">${isNew ? '추가' : '저장'}</button>
       ${!isNew && uid !== me.uid ? `<button id="del" class="ghost danger">${isRoster ? '명부에서 삭제' : '계정 정보 삭제'}</button>` : ''}</div>`);
 
   document.getElementById('back').onclick = () => go('hr');
+  const an = document.getElementById('annual');
+  an.oninput = () => { const v = num(an.value); document.getElementById('monthlyView').value = v ? comma(Math.round(v / 12)) + '원' : ''; };
+  an.onblur = () => { an.value = num(an.value) ? comma(num(an.value)) : ''; };
   document.getElementById('save').onclick = async () => {
     if (!val('name')) return toast('이름을 입력해 주세요');
     const data = {
@@ -483,9 +516,17 @@ async function renderPerson(uid) {
     let id = uid;
     if (isNew) { const r = await addDoc(collection(db, 'users'), { ...data, status: 'roster', createdAt: serverTimestamp() }); id = r.id; }
     else await updateDoc(doc(db, 'users', uid), data);
-    const m = val('monthly');
-    if (m !== '' || val('note') || !isNew)
-      await setDoc(doc(db, 'salaries', id), { monthly: m === '' ? null : Number(m), note: val('note'), updatedAt: serverTimestamp() });
+    const annual = num(val('annual'));
+    if (annual || val('note') || !isNew) {
+      const next = { ...sal, note: val('note'), updatedAt: serverTimestamp() };
+      if (annual !== num(sal.annual)) {   // 연봉이 바뀌면 오늘 날짜와 함께 이력에 남김
+        next.annual = annual || null;
+        next.monthly = annual ? Math.round(annual / 12) : null;
+        next.annualDate = ymd(new Date()); next.annualBy = me.name;
+        next.history = [...(sal.history || []), { annual, date: next.annualDate, by: me.name }];
+      }
+      await setDoc(doc(db, 'salaries', id), next);
+    }
     if (id === me.uid) await loadMe(auth.currentUser, false);
     toast(isNew ? '추가했어요' : '저장했어요');
     go('hr');
@@ -1166,6 +1207,30 @@ async function renderSchedule(head, bindTabs) {
   };
 }
 
+// ---------- 보안정책 ----------
+function renderSecurity() {
+  const sec = (n, t, items) => `<section class="sec"><h2>${n}. ${t}</h2>${items.map((i) => `<p>· ${i}</p>`).join('')}</section>`;
+  const qa = [
+    ['다른 직원이 내 급여나 연봉을 볼 수 있나요?', '아니요. 연봉·급여명세서는 본인과 관리자(대표원장, 경영실장)만 볼 수 있어요. 총괄실장, 팀장, 다른 원장님도 볼 수 없어요.'],
+    ['원장님이나 관리자가 내 비밀번호를 알 수 있나요?', '아니요. 비밀번호는 구글(Firebase)의 인증 시스템에 암호화되어 보관되고, 관리자를 포함해 누구도 볼 수 없어요. 잊어버리면 로그인 화면의 "비밀번호 찾기"로 다시 설정하세요.'],
+    ['환자 정보도 여기에 저장되나요?', '아니요. 이 직원포털에는 환자의 이름·연락처·진료기록을 저장하지 않아요.'],
+    ['공용 PC에서 써도 되나요?', '사용 후 꼭 오른쪽 위 "로그아웃"을 눌러 주세요. 로그아웃하지 않으면 그 기기에서 로그인 상태가 유지돼요.'],
+    ['퇴사하면 어떻게 되나요?', '관리자가 재직상태를 "퇴사"로 바꾸는 즉시 접속이 막혀요.']
+  ];
+  shell(`
+    <p class="eyebrow">SECURITY</p><h1>보안정책</h1>
+    <section class="card secCard">
+      ${sec(1, '데이터 보관', ['모든 데이터는 구글 클라우드(Firebase)의 서울 리전 데이터베이스에 저장돼요.', '주고받는 모든 내용은 암호화된 연결(HTTPS)로 전송돼요.'])}
+      ${sec(2, '접근 권한', ['로그인한 뒤 관리자가 가입을 승인한 직원만 사용할 수 있어요.', '관리자·원장·총괄실장·팀장·직원 등 역할에 따라 볼 수 있는 화면과 데이터가 나뉘어요.', '이 권한은 화면에서만 숨기는 게 아니라 데이터베이스(서버)에서 직접 막혀 있어서, 다른 방법으로 접근해도 볼 수 없어요.'])}
+      ${sec(3, '개인정보 보호', ['연봉·급여명세서는 본인과 관리자만, 연차 신청 내역은 본인과 관리자·총괄실장(같은 팀 팀장)만 볼 수 있어요.', '주민등록번호·생년월일은 저장하지 않아요.', '환자 개인정보는 저장하지 않아요.'])}
+      ${sec(4, '계정 보호', ['비밀번호는 구글 인증 시스템에 암호화되어 보관되며, 치과에서는 볼 수 없어요.', '퇴사 처리된 계정은 즉시 접속이 차단돼요.'])}
+    </section>
+    <section class="card secCard">
+      <h2 class="secH">자주 묻는 질문</h2>
+      ${qa.map(([q, a]) => `<div class="qa"><b>Q. ${q}</b><p>A. ${a}</p></div>`).join('')}
+    </section>`);
+}
+
 // ---------- 화면 설정 (관리자) ----------
 function renderSettings() {
   const t = { ...theme };
@@ -1248,7 +1313,7 @@ async function loadMe(user, rerender = true) {
   me = { uid: user.uid, ...d.data() };
   applyTheme();
   if (!rerender) return;
-  if (me.status !== 'active') return renderWaiting();
+  if (me.status !== 'active' || me.work === '퇴사') return renderWaiting();
   render();
 }
 
