@@ -602,3 +602,12 @@ aside.side button.mi.deep.on { color: var(--c); }
 .paper table.dt.info4 td:nth-child(2) { white-space: nowrap; }
 .paper table.pay5 { table-layout: fixed; }
 .paper table.pay5 th, .paper table.pay5 td.r { width: auto; }
+.paper table.dt.fx { table-layout: fixed; width: 100%; }
+.paper table.dt.fx th { width: auto; }
+.paper table.dt td { word-break: keep-all; overflow-wrap: anywhere; }
+@media print {
+  html, body { width: auto !important; min-width: 0 !important; overflow: visible !important; }
+  body.printModal .docPrint, body.printModal .docPrint .modalBox, body.printModal .paper { width: 100% !important; max-width: 100% !important; box-sizing: border-box !important; }
+  body.printModal .paper table.dt { width: 100% !important; box-sizing: border-box; }
+}
+.paper.cert > * { min-width: 0; max-width: 100%; }

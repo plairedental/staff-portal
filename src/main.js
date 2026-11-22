@@ -698,17 +698,17 @@ function certHtml(v, co) {
   return `<div class="paper cert">
   <h2>재&nbsp;&nbsp;직&nbsp;&nbsp;증&nbsp;&nbsp;명&nbsp;&nbsp;서</h2>
   <h3>[ 1. 인적사항 ]</h3>
-  <table class="dt info4"><colgroup><col style="width:12%"><col style="width:21%"><col style="width:15%"><col style="width:52%"></colgroup><tr><th>성명</th><td>${t(v.name)}</td><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
+  <table class="dt fx"><colgroup><col style="width:18%"><col style="width:32%"><col style="width:18%"><col style="width:32%"></colgroup><tr><th>성명</th><td>${t(v.name)}</td><th>주민등록번호</th><td>${t(v.rrn)}</td></tr>
     <tr><th>주소</th><td colspan="3">${t(v.addr)}</td></tr></table>
   <h3>[ 2. 재직사항 ]</h3>
-  <table class="dt"><tr><th>회사명</th><td>${t(co.name)}</td><th>대표자</th><td>대표원장 ${t(co.ceo)}</td></tr>
+  <table class="dt fx"><colgroup><col style="width:18%"><col style="width:32%"><col style="width:18%"><col style="width:32%"></colgroup><tr><th>회사명</th><td>${t(co.name)}</td><th>대표자</th><td>대표원장 ${t(co.ceo)}</td></tr>
     <tr><th>사업자등록번호</th><td>${t(co.bizNo)}</td><th>업태 / 종목</th><td>${t(co.bizType)}</td></tr>
     <tr><th>소재지</th><td colspan="3">${t(co.addr)}</td></tr>
     <tr><th>직위 및 담당업무</th><td>${t(v.job)}</td><th>소속부서</th><td>${t(v.dept)}</td></tr>
     <tr><th>입사일자</th><td>${krDate(v.start)}</td><th>재직구분</th><td>${quit ? '퇴사' : '재직중'}</td></tr>
     <tr><th>재직기간</th><td colspan="3">${krDate(v.start)} ~ ${quit ? krDate(v.end) : '현재 (재직중)'}</td></tr></table>
   <h3>[ 3. 증명서 용도 ]</h3>
-  <table class="dt"><tr><th>용도</th><td>${t(v.purpose)}</td></tr></table>
+  <table class="dt fx"><colgroup><col style="width:18%"><col style="width:82%"></colgroup><tr><th>용도</th><td>${t(v.purpose)}</td></tr></table>
   <p class="center stmt">상기인은 위와 같이 ${quit ? '재직하였음' : '현재 재직 중임'}을 증명합니다.</p>
   <p class="center date">${krDate(v.date).replace(/ /g, '   ')}</p>
   <p class="center seal">${t(co.name).split('').join(' ')}&nbsp;&nbsp;&nbsp;대 표 원 장&nbsp;&nbsp;&nbsp;&nbsp;${t(co.ceo).split('').join('&nbsp;&nbsp;&nbsp;')}&nbsp;&nbsp;&nbsp;(인)</p>

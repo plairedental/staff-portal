@@ -226,17 +226,17 @@ var Ho=()=>{};var zo=function(t){let e=[],n=0;for(let s=0;s<t.length;s++){let r=
   </div></div>`}function vm(t,e){let n=r=>E(r||""),s=t.status==="\uD1F4\uC0AC";return`<div class="paper cert">
   <h2>\uC7AC&nbsp;&nbsp;\uC9C1&nbsp;&nbsp;\uC99D&nbsp;&nbsp;\uBA85&nbsp;&nbsp;\uC11C</h2>
   <h3>[ 1. \uC778\uC801\uC0AC\uD56D ]</h3>
-  <table class="dt info4"><colgroup><col style="width:12%"><col style="width:21%"><col style="width:15%"><col style="width:52%"></colgroup><tr><th>\uC131\uBA85</th><td>${n(t.name)}</td><th>\uC8FC\uBBFC\uB4F1\uB85D\uBC88\uD638</th><td>${n(t.rrn)}</td></tr>
+  <table class="dt fx"><colgroup><col style="width:18%"><col style="width:32%"><col style="width:18%"><col style="width:32%"></colgroup><tr><th>\uC131\uBA85</th><td>${n(t.name)}</td><th>\uC8FC\uBBFC\uB4F1\uB85D\uBC88\uD638</th><td>${n(t.rrn)}</td></tr>
     <tr><th>\uC8FC\uC18C</th><td colspan="3">${n(t.addr)}</td></tr></table>
   <h3>[ 2. \uC7AC\uC9C1\uC0AC\uD56D ]</h3>
-  <table class="dt"><tr><th>\uD68C\uC0AC\uBA85</th><td>${n(e.name)}</td><th>\uB300\uD45C\uC790</th><td>\uB300\uD45C\uC6D0\uC7A5 ${n(e.ceo)}</td></tr>
+  <table class="dt fx"><colgroup><col style="width:18%"><col style="width:32%"><col style="width:18%"><col style="width:32%"></colgroup><tr><th>\uD68C\uC0AC\uBA85</th><td>${n(e.name)}</td><th>\uB300\uD45C\uC790</th><td>\uB300\uD45C\uC6D0\uC7A5 ${n(e.ceo)}</td></tr>
     <tr><th>\uC0AC\uC5C5\uC790\uB4F1\uB85D\uBC88\uD638</th><td>${n(e.bizNo)}</td><th>\uC5C5\uD0DC / \uC885\uBAA9</th><td>${n(e.bizType)}</td></tr>
     <tr><th>\uC18C\uC7AC\uC9C0</th><td colspan="3">${n(e.addr)}</td></tr>
     <tr><th>\uC9C1\uC704 \uBC0F \uB2F4\uB2F9\uC5C5\uBB34</th><td>${n(t.job)}</td><th>\uC18C\uC18D\uBD80\uC11C</th><td>${n(t.dept)}</td></tr>
     <tr><th>\uC785\uC0AC\uC77C\uC790</th><td>${en(t.start)}</td><th>\uC7AC\uC9C1\uAD6C\uBD84</th><td>${s?"\uD1F4\uC0AC":"\uC7AC\uC9C1\uC911"}</td></tr>
     <tr><th>\uC7AC\uC9C1\uAE30\uAC04</th><td colspan="3">${en(t.start)} ~ ${s?en(t.end):"\uD604\uC7AC (\uC7AC\uC9C1\uC911)"}</td></tr></table>
   <h3>[ 3. \uC99D\uBA85\uC11C \uC6A9\uB3C4 ]</h3>
-  <table class="dt"><tr><th>\uC6A9\uB3C4</th><td>${n(t.purpose)}</td></tr></table>
+  <table class="dt fx"><colgroup><col style="width:18%"><col style="width:82%"></colgroup><tr><th>\uC6A9\uB3C4</th><td>${n(t.purpose)}</td></tr></table>
   <p class="center stmt">\uC0C1\uAE30\uC778\uC740 \uC704\uC640 \uAC19\uC774 ${s?"\uC7AC\uC9C1\uD558\uC600\uC74C":"\uD604\uC7AC \uC7AC\uC9C1 \uC911\uC784"}\uC744 \uC99D\uBA85\uD569\uB2C8\uB2E4.</p>
   <p class="center date">${en(t.date).replace(/ /g,"   ")}</p>
   <p class="center seal">${n(e.name).split("").join(" ")}&nbsp;&nbsp;&nbsp;\uB300 \uD45C \uC6D0 \uC7A5&nbsp;&nbsp;&nbsp;&nbsp;${n(e.ceo).split("").join("&nbsp;&nbsp;&nbsp;")}&nbsp;&nbsp;&nbsp;(\uC778)</p>
