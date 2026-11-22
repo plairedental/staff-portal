@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function me() { return get(myPath()).data; }
+    function active() { return signedIn() && exists(myPath()) && me().status == 'active'; }
+    function hasRole(r) { return active() && me().role in r; }
+    function isAdmin() { return hasRole(['admin']); }
+
+    // 직원 기본정보 (급여는 여기 없음)
+    match /users/{uid} {
+      allow read: if signedIn() && (
+        request.auth.uid == uid
+        || isAdmin()
+        || hasRole(['doctor', 'chief'])
+        || (hasRole(['leader']) && resource.data.team == me().team)
+      );
+      // 가입: 본인 문서만, 항상 '직원 / 승인 대기'로 시작
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.role == 'staff'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.keys().hasOnly(['name', 'email', 'phone', 'role', 'status', 'createdAt']);
+      // 관리자는 모두 수정, 본인은 연락처만
+      allow update: if isAdmin()
+        || (request.auth.uid == uid && active()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phone']));
+      allow delete: if isAdmin();
+    }
+
+    // 급여: 본인과 관리자만
+    match /salaries/{uid} {
+      allow read: if isAdmin() || (request.auth.uid == uid && active());
+      allow write: if isAdmin();
+    }
+
+    // 매뉴얼: 승인된 직원 모두 읽기, 관리자·총괄실장 수정
+    match /manuals/{id} {
+      allow read: if active();
+      allow write: if hasRole(['admin', 'chief']);
+    }
+  }
+}
