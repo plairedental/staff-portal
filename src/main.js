@@ -633,7 +633,7 @@ async function renderIncentive() {
   const st = { ...INC_DEFAULT, ...JSON.parse(JSON.stringify(saved[month] || (prevKey ? saved[prevKey] : {}))) };
   const fromPrev = !saved[month] && prevKey;
   if (!st.units) st.units = INC_UNITS.map((name) => ({ name, rate: st.teamRates?.[name] ?? 0 }));
-  st.doctorRates ||= {};
+  st.doctorRates ||= {}; st.doctorRatios ||= {};
   const tmap = {}; (org.groups || []).forEach((g) => (g.members || []).forEach((mm) => { tmap[mm.name] = mm.title || ''; }));
   const monthly = (uid) => sal[uid]?.annual ? Math.round(sal[uid].annual / 12) : num(sal[uid]?.monthly);
   const working = people.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사' && !noPay(p, tmap));
@@ -647,7 +647,12 @@ async function renderIncentive() {
   const noSal = working.filter((p) => !monthly(p.uid));
   const totalPay = staff.reduce((s, p) => s + monthly(p.uid), 0);
   const fmtW = (n) => comma(Math.round(n)) + '원';
-  const slider = (key, v, max, step) => `<div class="sliderRow tight"><input type="range" class="rateR" data-k="${esc(key)}" min="0" max="${max}" step="${step}" value="${v}"><input class="numBox rateN" data-k="${esc(key)}" value="${v}" inputmode="decimal"><span>%</span></div>`;
+  const slider = (key, v, max, step, min = 0) => `<div class="sliderRow tight"><input type="range" class="rateR" data-k="${esc(key)}" min="${min}" max="${max}" step="${step}" value="${v}"><input class="numBox rateN" data-k="${esc(key)}" value="${v}" inputmode="decimal"><span>%</span></div>`;
+  // 가로 한 줄: 이름 | 슬라이더 | 숫자 | 설명 | (삭제)
+  const rateRow = (key, label, v, max, desc, del = '', cls = '') => `<div class="rateRow ${cls}"><b>${esc(label)}</b>
+    <input type="range" class="rateR" data-k="${esc(key)}" min="0" max="${max}" step="0.5" value="${v}">
+    <span class="nb"><input class="numBox rateN" data-k="${esc(key)}" value="${v}" inputmode="decimal">%</span>
+    <span class="muted sm">${desc}</span>${del || '<span></span>'}</div>`;
 
   shell(`
     <div class="row between"><div><p class="eyebrow">TARGET &amp; INCENTIVE</p><h1>목표매출·인센티브</h1></div>
@@ -674,27 +679,26 @@ async function renderIncentive() {
 
     <section class="card">
       <h3>③ 원장 목표 매출</h3>
-      <p class="muted sm">원장 목표 매출 = 본인 세전 월급여 ÷ 인건비 비율(①과 같은 비율). 초과 매출의 몇 %를 인센티브로 할지 정해요.</p>
+      <p class="muted sm">원장 목표 매출 = 본인 세전 월급여 ÷ 원장 인건비 비율. 원장마다 인건비 비율과 초과 매출 인센티브 비율을 따로 정해요.</p>
       <div class="tbl"><table class="mt incT" id="docT"></table></div>
     </section>
 
     <section class="card">
       <h3>④ 인센티브 비율</h3>
-      <div class="rateGrid">
-        <div class="rateCard main"><b>진료팀</b>${slider('__clinic', st.clinicRate, 50, 0.5)}<p class="muted sm">각 진료팀 <b>초과 매출</b>의 <b class="rv" data-k="__clinic">${st.clinicRate}</b>%를 그 팀 인센티브로 줘요.</p>
-          <div class="sliderRow tight sm"><span class="nowrap">팀장 최대</span><input type="range" id="lmax" min="30" max="100" step="5" value="${st.leaderMax}"><b id="lmaxV">${st.leaderMax}%</b></div>
-          <p class="muted sm">팀 인센티브는 팀장이 배분해요. 팀장은 최대 이 비율까지 가져가고, 나머지는 팀원에게 팀장 재량으로 나눠요.</p></div>
+      <div class="rateList" id="clinicRate">
+        ${rateRow('__clinic', '진료팀', st.clinicRate, 50, `각 진료팀 <b>초과 매출</b>의 <b class="rv" data-k="__clinic">${st.clinicRate}</b>%를 그 팀 인센티브로`, '', 'main')}
+        <div class="rateRow main"><b>└ 팀장 최대 몫</b><input type="range" id="lmax" min="30" max="100" step="5" value="${st.leaderMax}"><span class="nb"><b id="lmaxV">${st.leaderMax}%</b></span>
+          <span class="muted sm">팀장이 최대 이만큼 가져가고, 나머지는 팀원에게 팀장 재량으로 나눠요</span><span></span></div>
       </div>
-      <h4 class="subH">비진료부 (간접 지원)</h4>
-      <div class="rateGrid" id="unitGrid"></div>
+      <h4 class="subH">비진료부 (간접 지원) — 전체 초과 매출 기준</h4>
+      <div class="rateList" id="unitGrid"></div>
       <div class="row"><input id="unitNew" placeholder="항목 이름 (예: 데스크)" style="max-width:220px"><button class="sm" id="unitAdd">+ 항목 추가</button></div>
     </section>`);
 
   const target = () => totalPay && st.ratio ? totalPay / (st.ratio / 100) : 0;
   const clinicPay = () => st.clinicTeams.reduce((s, t) => s + (payByTeam[t] || 0), 0);
   const drawUnits = () => {
-    document.getElementById('unitGrid').innerHTML = st.units.map((u, i) => `<div class="rateCard"><div class="row between"><b>${esc(u.name)}</b><button class="ghost sm danger" data-udel="${i}" title="빼기">✕</button></div>
-      ${slider('u:' + i, u.rate, 20, 0.5)}<p class="muted sm">전체 초과 매출의 <b class="rv" data-k="u:${i}">${u.rate}</b>%를 인센티브로 줘요.</p></div>`).join('') || '<p class="muted sm">항목이 없어요.</p>';
+    document.getElementById('unitGrid').innerHTML = st.units.map((u, i) => rateRow('u:' + i, u.name, u.rate, 20, `전체 초과 매출의 <b class="rv" data-k="u:${i}">${u.rate}</b>%를 인센티브로`, `<button class="ghost sm danger" data-udel="${i}" title="빼기">✕</button>`)).join('') || '<p class="muted sm">항목이 없어요.</p>';
     document.querySelectorAll('[data-udel]').forEach((b) => b.onclick = () => { st.units.splice(+b.dataset.udel, 1); drawUnits(); });
     bindRates(document.getElementById('unitGrid'));
   };
@@ -703,6 +707,7 @@ async function renderIncentive() {
     if (k === '__clinic') st.clinicRate = v;
     else if (k.startsWith('u:')) st.units[+k.slice(2)].rate = v;
     else if (k.startsWith('d:')) st.doctorRates[k.slice(2)] = v;
+    else if (k.startsWith('dr:')) { st.doctorRatios[k.slice(3)] = Math.max(1, v); drawDoc(); }
     $app.querySelectorAll(`[data-k="${CSS.escape(k)}"]`).forEach((e) => { if (e.classList.contains('rv')) e.textContent = v; else if (document.activeElement !== e) e.value = v; });
   };
   const bindRates = (root) => {
@@ -718,15 +723,19 @@ async function renderIncentive() {
       ${rows.length ? `<tr class="sum"><th>합계</th><th class="r">${comma(clinicPay())}</th><th class="r">100%</th><th class="r">${comma(target())}</th></tr>` : ''}`;
     const dt = document.getElementById('docT');
     if (!dt.dataset.built) {
-      dt.innerHTML = `<tr><th>원장</th><th class="r">세전 월급여</th><th class="r">목표 매출</th><th style="width:38%">초과 매출 인센티브 비율</th></tr>
-        ${doctors.map((p) => `<tr><td><b>${esc(p.name)}</b></td><td class="r">${monthly(p.uid) ? comma(monthly(p.uid)) : '<span class="warnTxt">연봉 없음</span>'}</td><td class="r accent"><b data-dt="${p.uid}"></b></td>
-          <td>${slider('d:' + p.uid, st.doctorRates[p.uid] ?? 0, 50, 0.5)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">역할이 "원장"인 직원이 없어요.</td></tr>'}`;
+      dt.innerHTML = `<tr><th>원장</th><th class="r">세전 월급여</th><th style="width:26%">인건비 비율</th><th class="r">목표 매출</th><th style="width:26%">초과 매출 인센티브 비율</th></tr>
+        ${doctors.map((p) => `<tr><td><b>${esc(p.name)}</b></td><td class="r">${monthly(p.uid) ? comma(monthly(p.uid)) : '<span class="warnTxt">연봉 없음</span>'}</td>
+          <td>${slider('dr:' + p.uid, st.doctorRatios[p.uid] ?? st.ratio, 50, 0.5, 5)}</td><td class="r accent"><b data-dt="${p.uid}"></b></td>
+          <td>${slider('d:' + p.uid, st.doctorRates[p.uid] ?? 0, 50, 0.5)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">역할이 "원장"인 직원이 없어요.</td></tr>'}`;
       dt.dataset.built = '1'; bindRates(dt);
     }
-    doctors.forEach((p) => { const e = dt.querySelector(`[data-dt="${p.uid}"]`); if (e) e.textContent = st.ratio ? comma(monthly(p.uid) / (st.ratio / 100)) : '-'; });
+    drawDoc();
   };
+  function drawDoc() {
+    doctors.forEach((p) => { const e = document.querySelector(`[data-dt="${p.uid}"]`); const r = st.doctorRatios[p.uid] ?? st.ratio; if (e) e.textContent = r ? comma(monthly(p.uid) / (r / 100)) : '-'; });
+  }
   draw(); drawUnits();
-  bindRates($app.querySelector('.rateCard.main'));
+  bindRates(document.getElementById('clinicRate'));
   const rr = document.getElementById('ratio'), rn = document.getElementById('ratioN');
   rr.oninput = () => { st.ratio = Number(rr.value); rn.value = st.ratio; draw(); };
   rn.onchange = () => { st.ratio = Math.min(80, Math.max(1, Number(rn.value) || 20)); rr.value = st.ratio; rn.value = st.ratio; draw(); };

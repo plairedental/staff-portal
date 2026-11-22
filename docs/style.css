@@ -654,3 +654,12 @@ table.incT .ok { color: var(--c); font-weight: 800; }
 .subH { margin: 1.2rem 0 .5rem; color: var(--muted); font-size: .9rem; }
 .nowrap { white-space: nowrap; }
 td.accent, .incT .accent { color: var(--c); }
+.rateList { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-bottom: .6rem; }
+.rateRow { display: grid; grid-template-columns: 150px minmax(160px, 1fr) 96px minmax(200px, 1.2fr) 40px; align-items: center; gap: .9rem; padding: .55rem 1rem; border-bottom: 1px solid var(--line); }
+.rateRow:last-child { border-bottom: none; }
+.rateRow.main { background: var(--c2); }
+.rateRow input[type=range] { width: 100%; accent-color: var(--c); margin: 0; }
+.rateRow .nb { display: inline-flex; align-items: center; gap: .25rem; white-space: nowrap; }
+.rateRow .numBox { width: 4.2rem !important; }
+@media (max-width: 760px) { .rateRow { grid-template-columns: 1fr 80px 32px; } .rateRow input[type=range] { grid-column: 1 / -1; grid-row: 2; } .rateRow > span.muted { grid-column: 1 / -1; } }
+table.incT td { vertical-align: middle; }
