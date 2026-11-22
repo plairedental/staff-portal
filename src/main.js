@@ -1329,18 +1329,26 @@ function withTree(org) {
   g.forEach((x) => { if (x.parent && !g.some((y) => y.id === x.parent)) x.parent = ''; });
   return org;
 }
-// 트리 순서(위→아래, 왼→오)로 부서 나열
+// 트리 구조 도우미: 첫 번째 최상위 부서가 가운데(맨 위), 나머지 최상위 부서와 '옆' 부서는 그 옆에 붙여 표시
+function orgTree(org) {
+  const g = org.groups || [];
+  const main = g.find((x) => !x.parent);
+  const kids = (id) => g.filter((x) => x.parent === id && !x.side);
+  const sides = (id) => [...g.filter((x) => x.parent === id && x.side), ...(main && id === main.id ? g.filter((x) => !x.parent && x !== main) : [])];
+  return { g, main, kids, sides };
+}
+// 트리 순서(위→아래, 왼→오)로 부서 나열 — 옆 부서는 기준 부서 바로 다음
 function orgTreeList(org) {
-  const g = org.groups || [], out = [];
-  const walk = (pid, depth) => g.filter((x) => (x.parent || '') === pid).forEach((x) => { out.push({ g: x, depth }); walk(x.id, depth + 1); });
-  walk('', 0);
-  g.forEach((x) => { if (!out.some((o) => o.g === x)) out.push({ g: x, depth: 0 }); });
+  const { g, main, kids, sides } = orgTree(org), out = [];
+  const visit = (x, depth, side) => { if (out.some((o) => o.g === x)) return; out.push({ g: x, depth, side }); sides(x.id).forEach((s2) => visit(s2, depth, true)); kids(x.id).forEach((c) => visit(c, depth + 1, false)); };
+  if (main) visit(main, 0, false);
+  g.forEach((x) => { if (!out.some((o) => o.g === x)) out.push({ g: x, depth: 0, side: true }); });
   return out;
 }
-// 근무표·명단 순서: 조직도 트리 순서 그대로
+// 근무표·명단 순서: 조직도 트리 순서 그대로 (맨 위 가운데 부서 = 원장진)
 function orgOrder(org) {
   const out = [];
-  orgTreeList(withTree(org)).forEach(({ g, depth }, gi) => (g.members || []).forEach((m) => out.push({ name: m.name, group: g.name, doctor: depth === 0, gi })));
+  orgTreeList(withTree(org)).forEach(({ g, depth, side }, gi) => (g.members || []).forEach((m) => out.push({ name: m.name, group: g.name, doctor: depth === 0 && !side, gi })));
   return out;
 }
 
@@ -1384,18 +1392,20 @@ async function renderOrg() {
   if (!editing) {
     const person = (m) => `<div class="op"><div><b>${esc(m.name)}</b>${m.title ? `<span class="tag">${esc(m.title)}</span>` : ''}</div>
       ${m.rr ? `<p>${esc(m.rr)}</p>` : ''}${m.duty ? `<p class="muted">🔧 ${esc(m.duty)}</p>` : ''}${m.backup ? `<p class="muted">🤝 휴무 시 인계: ${esc(m.backup)}</p>` : ''}</div>`;
+    const T = orgTree(org);
+    const card = (g, cls) => `<div class="og ${cls}"><div class="ogh">${esc(g.name)} <small>${(g.members || []).length}명</small></div>${(g.members || []).map(person).join('')}</div>`;
     const node = (g, depth) => {
-      const kids = org.groups.filter((x) => (x.parent || '') === g.id);
-      return `<li><div class="og ${depth === 0 ? 'doc' : ''}"><div class="ogh">${esc(g.name)} <small>${(g.members || []).length}명</small></div>${(g.members || []).map(person).join('')}</div>
+      const kids = T.kids(g.id), sides = T.sides(g.id);
+      return `<li><div class="nodeBox">${card(g, depth === 0 ? 'doc' : '')}
+          ${sides.length ? `<div class="sides">${sides.map((x) => `<span class="sideLine"></span>${card(x, 'side')}`).join('')}</div>` : ''}</div>
         ${kids.length ? `<ul>${kids.map((k) => node(k, depth + 1)).join('')}</ul>` : ''}</li>`;
     };
-    const roots = org.groups.filter((x) => !x.parent);
+    const roots = T.main ? [T.main] : [];
     shell(`
       <div class="row between"><div><p class="eyebrow">ORGANIZATION</p><h1>조직도</h1><p class="muted sm">총 ${total}명 · 근무표에도 이 순서대로 보여요.</p></div>
         <div class="row">${me.role === 'admin' ? '<label class="upload ghostUp">📥 자료 파일 불러오기<input type="file" id="initFile" accept=".json" hidden></label>' : ''}
         ${can.editManual() ? '<button id="edit" class="primary">✏️ 조직도 편집</button>' : ''}</div></div>
       ${!total ? '<div class="card sm muted">아직 조직도가 비어 있어요. 관리자가 "자료 파일 불러오기"로 받은 파일을 올리거나 "조직도 편집"에서 직접 입력해 주세요.</div>' : ''}
-      <div class="orgTop">${brand('small')}</div>
       <div class="tree"><ul>${roots.map((r) => node(r, 0)).join('')}</ul></div>`);
     document.getElementById('edit')?.addEventListener('click', () => go('org', { edit: true }));
     document.getElementById('initFile')?.addEventListener('change', (e) => importInitFile(e.target.files[0]));
@@ -1409,17 +1419,17 @@ async function renderOrg() {
     const list = orgTreeList({ groups: g });
     shell(`
       <div class="row between"><div><p class="eyebrow">ORGANIZATION</p><h1>조직도 편집</h1>
-        <p class="muted sm">부서마다 <b>"어디 밑에 있나요?"</b>를 고르면 계층이 정해져요. 같은 상위 부서 밑에 있으면 같은 줄에 나란히 보여요.<br>↑↓는 같은 줄 안의 순서예요. 근무표 순서도 같이 바뀌어요.</p></div>
+        <p class="muted sm">부서마다 <b>"어디 밑에 있나요?"</b>를 고르면 계층이 정해져요. 같은 상위 부서 밑에 있으면 같은 줄에 나란히 보여요.<br>"○○ 옆"을 고르면 그 부서 바로 옆에 붙어서 보여요 (예: 경영지원을 원장 옆에). 맨 위 부서가 여러 개면 두 번째부터는 첫 번째 옆에 붙어요.<br>↑↓는 같은 줄 안의 순서예요. 근무표 순서도 같이 바뀌어요.</p></div>
         <div class="row"><button id="cancel" class="ghost">취소</button><button id="saveOrg" class="primary">저장</button></div></div>
       <datalist id="names">${people.filter((p) => ['active', 'roster'].includes(p.status)).map((p) => `<option value="${esc(p.name)}">`).join('')}</datalist>
-      ${list.map(({ g: grp, depth }) => { const gi = g.indexOf(grp); const bad = [grp.id, ...descendants(grp.id)]; return `
-        <div class="lvLine"><span>${depth + 1}단계</span></div>
+      ${list.map(({ g: grp, depth, side }) => { const gi = g.indexOf(grp); const bad = [grp.id, ...descendants(grp.id)]; return `
+        <div class="lvLine"><span>${depth + 1}단계${side ? ' · 옆' : ''}</span></div>
         <section class="card oe" style="margin-left:${Math.min(depth, 4) * 1.6}rem">
           <div class="row">
             <span class="depth">${'└'.repeat(depth ? 1 : 0)}</span>
             <input class="gname" data-g="${gi}" value="${esc(grp.name)}" placeholder="부서·팀 이름">
             <label class="sm row parentSel">어디 밑에 있나요?
-              <select data-par="${gi}"><option value="">맨 위 (최상위)</option>${g.filter((x) => !bad.includes(x.id)).map((x) => `<option value="${x.id}" ${grp.parent === x.id ? 'selected' : ''}>${esc(x.name)} 밑</option>`).join('')}</select></label>
+              <select data-par="${gi}"><option value="">맨 위 (최상위)</option>${g.filter((x) => !bad.includes(x.id)).map((x) => `<option value="${x.id}" ${grp.parent === x.id && !grp.side ? 'selected' : ''}>${esc(x.name)} 밑</option><option value="side:${x.id}" ${grp.parent === x.id && grp.side ? 'selected' : ''}>${esc(x.name)} 옆 (나란히)</option>`).join('')}</select></label>
             <button data-gu="${gi}" class="ghost sm" title="같은 줄에서 앞으로">↑</button><button data-gd="${gi}" class="ghost sm" title="같은 줄에서 뒤로">↓</button>
             <button data-gx="${gi}" class="ghost sm danger">부서 삭제</button></div>
           <div class="tbl"><table class="oeT"><tr><th></th><th>이름</th><th>직급</th><th>R&R (역할)</th><th>담당 업무</th><th>휴무 시 인계</th><th></th></tr>
@@ -1440,7 +1450,10 @@ async function renderOrg() {
     };
     const sw = (arr, i, j) => { if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; draw(); };
     $app.querySelectorAll('.gname').forEach((el) => el.oninput = () => { g[el.dataset.g].name = el.value; });
-    $app.querySelectorAll('[data-par]').forEach((el) => el.onchange = () => { g[el.dataset.par].parent = el.value; draw(); });
+    $app.querySelectorAll('[data-par]').forEach((el) => el.onchange = () => {
+      const x = g[el.dataset.par], v = el.value;
+      x.side = v.startsWith('side:'); x.parent = x.side ? v.slice(5) : v; draw();
+    });
     $app.querySelectorAll('[data-m]').forEach((el) => el.oninput = () => { const [gi, mi, k] = el.dataset.m.split(':'); g[gi].members[mi][k] = el.value; });
     $app.querySelectorAll('[data-gu]').forEach((b) => b.onclick = () => swapSib(+b.dataset.gu, -1));
     $app.querySelectorAll('[data-gd]').forEach((b) => b.onclick = () => swapSib(+b.dataset.gd, 1));
@@ -1458,7 +1471,8 @@ async function renderOrg() {
     document.getElementById('addG').onclick = () => { g.push({ id: newId(), name: '새 부서', parent: '', members: [] }); draw(); };
     document.getElementById('cancel').onclick = () => go('org');
     document.getElementById('saveOrg').onclick = async () => {
-      g.forEach((grp) => { grp.members = (grp.members || []).filter((m) => m.name.trim()).map((m) => ({ ...m, name: m.name.trim() })); grp.doctor = !grp.parent; });
+      g.forEach((grp) => { grp.members = (grp.members || []).filter((m) => m.name.trim()).map((m) => ({ ...m, name: m.name.trim() })); grp.side = !!grp.side; });
+      const mainG = g.find((x) => !x.parent); g.forEach((grp) => { grp.doctor = grp === mainG; });
       const missing = orgOrder({ groups: g }).map((x) => x.name).filter((n) => !people.some((p) => p.name === n && p.status !== 'rejected'));
       if (missing.length && me.role === 'admin' && confirm(`회원 명부에 없는 이름이 있어요: ${missing.join(', ')}\n명부(미가입)에 추가할까요? 추가해야 근무표에 나와요.`)) {
         for (const n of missing) {

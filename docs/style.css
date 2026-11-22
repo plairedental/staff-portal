@@ -361,3 +361,12 @@ table.cal { width: 100%; min-width: 640px; border-collapse: collapse; table-layo
 }
 .tree > ul { width: max-content; min-width: 100%; margin: 0 auto; }
 .tree .og { width: 230px; }
+.nodeBox { position: relative; }
+.sides { position: absolute; left: 100%; top: 0; display: flex; align-items: flex-start; }
+.sideLine { width: 2.2rem; flex: none; margin-top: 1.3rem; border-top: 2px dashed #c9d3d2; }
+.og.side { width: 230px; }
+@media (max-width: 760px) {
+  .sides { position: static; flex-direction: column; margin-top: .5rem; }
+  .sideLine { display: none; }
+  .og.side { width: auto; }
+}
