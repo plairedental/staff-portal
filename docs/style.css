@@ -600,3 +600,5 @@ aside.side button.mi.deep.on { color: var(--c); }
 .paper table.dt.info4 { table-layout: fixed; }
 .paper table.dt.info4 th { width: auto; }
 .paper table.dt.info4 td:nth-child(2) { white-space: nowrap; }
+.paper table.pay5 { table-layout: fixed; }
+.paper table.pay5 th, .paper table.pay5 td.r { width: auto; }

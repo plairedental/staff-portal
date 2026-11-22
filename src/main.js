@@ -649,7 +649,7 @@ function contractHtml(v, co) {
   <p>③ 근로자는 사용자의 업무상 필요가 있는 경우 노동관계법령이 허용하는 범위 내에서 제1항 및 제2항 외의 시간외근로(연장근로 및 휴일근로)를 실시하는 것에 동의하며, 이 경우 사용자는 근로자에게 별도의 시간외수당을 지급한다.</p>
   <p>④ 근로자는 사용자의 승인 또는 지시 없이 시간외근로를 실시하여서는 아니되며, 이를 위반하여 실시하는 경우 별도의 임금을 지급하지 아니한다.</p>
   <h3>제5조 [ 임금의 구성항목 및 지급방법 ]</h3>
-  <table class="dt pay5"><tr><th>항목</th><th>금액</th><th>산출 내역 및 지급 기준</th></tr>
+  <table class="dt pay5"><colgroup><col style="width:20%"><col style="width:16%"><col style="width:64%"></colgroup><tr><th>항목</th><th>금액</th><th>산출 내역 및 지급 기준</th></tr>
     <tr><th>연봉총액</th><td class="r">${won2(v.annual)}</td><td>세전 연간 총 지급액 (퇴직금 별도)</td></tr>
     <tr><th>세전 월 급여액</th><td class="r">${won2(v.month)}</td><td>기본급 + 고정연장수당 + 식대 합계액</td></tr>
     <tr><th>기본급</th><td class="r">${won2(v.base)}</td><td>월 소정근로시간(209시간)에 대한 통상임금 기준 기본 대가</td></tr>
@@ -679,7 +679,7 @@ function contractHtml(v, co) {
   <p>① 근로자는 고의 또는 중대한 과실로 인하여 사용자에게 손해를 입힌 경우에는 책임있는 범위 내에서 그 실손해에 대한 책임을 진다.</p>
   <p>② 근로자는 본 근로계약 및 사용자의 취업규칙에 따라 성실히 근무하여야 하며, 사용자는 근로자의 근무태도, 업무능력, 질서문란 등에 대하여 취업규칙에 따라 적절한 조치를 취할 수 있다.</p>
   <p>③ 본 근로계약에 명시되지 아니한 사항은 취업규칙, 노동관계법령에 따른다.</p>
-  <p class="center gap">본 계약 체결을 증명하기 위하여 계약서 2부를 작성하고, 사업주와 근로자가 각각 서명 또는 날인 후 각 1부씩 보관한다.</p>
+  <p class="center gap">본 계약 체결을 증명하기 위하여 계약서 2부를 작성하고, 사업주와 근로자가 서명 또는 날인 후 각 1부씩 보관한다.</p>
   <p class="center date">${krDate(v.date).replace(/ /g, '  ')}</p>
   <div class="signs">
     <table class="dt"><tr><th colspan="2" class="center">[ 사 업 주 (사용자) ]</th></tr>
