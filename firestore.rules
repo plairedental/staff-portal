@@ -123,12 +123,25 @@ service cloud.firestore {
       allow read: if active();
       allow write: if hasRole(['admin', 'chief']);
     }
-    // 교육 신청·수강: 본인은 신청/수강 완료/취소, 일정 확정은 관리자·총괄실장
+    // 교육 신청·이수: 본인은 신청/확인 요청/취소, 일정·이수 인정은 멘토(관리자·총괄실장·팀장)
     match /eduStatus/{id} {
-      allow read: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
-      allow create: if hasRole(['admin', 'chief']) || (active() && request.resource.data.uid == request.auth.uid && request.resource.data.status in ['신청', '수강 완료']);
-      allow update: if hasRole(['admin', 'chief']);
-      allow delete: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid && resource.data.status == '신청');
+      allow read: if hasRole(['admin', 'chief', 'leader']) || (active() && resource.data.uid == request.auth.uid);
+      allow create: if hasRole(['admin', 'chief', 'leader']) || (active() && request.resource.data.uid == request.auth.uid && request.resource.data.status in ['신청', '확인 요청']);
+      allow update: if hasRole(['admin', 'chief', 'leader']);
+      allow delete: if hasRole(['admin', 'chief', 'leader']) || (active() && resource.data.uid == request.auth.uid && resource.data.status in ['신청', '확인 요청']);
+    }
+    // 실습 기록: 본인이 쓰고, 멘토가 피드백(mentor 칸은 멘토만)
+    match /practice/{id} {
+      allow read: if hasRole(['admin', 'chief', 'leader']) || (active() && resource.data.uid == request.auth.uid);
+      allow create: if active() && request.resource.data.uid == request.auth.uid && !('mentor' in request.resource.data);
+      allow update: if hasRole(['admin', 'chief', 'leader'])
+        || (active() && resource.data.uid == request.auth.uid && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['mentor', 'uid']));
+      allow delete: if hasRole(['admin', 'chief', 'leader']) || (active() && resource.data.uid == request.auth.uid && !('mentor' in resource.data));
+    }
+    match /practiceImages/{id} {
+      allow read: if hasRole(['admin', 'chief', 'leader']) || (active() && resource.data.uid == request.auth.uid);
+      allow create: if active() && request.resource.data.uid == request.auth.uid;
+      allow delete: if hasRole(['admin', 'chief', 'leader']) || (active() && resource.data.uid == request.auth.uid);
     }
     // 일계표(환자 수납 기록 포함): 관리자만
     match /daily/{id} {

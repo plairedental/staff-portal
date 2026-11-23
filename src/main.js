@@ -220,6 +220,7 @@ const MY_ITEMS = [
 ];
 let lastCat = 'hr';
 const curKey = () => {
+  if (view === 'prac') return 'eduprog';
   if (view === 'work') return 'work:' + (sub?.tab || 'schedule');
   if (view === 'manual') {
     if (sub?.edit === null) return 'm:new';
@@ -270,7 +271,7 @@ function shell(content) {
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
-      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'daily', 'goods', 'perf', 'edu'].includes(key) ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'daily', 'goods', 'perf', 'edu', 'eduprog'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { const c = cats.find((x) => x.key === b.dataset.cat); goKey((c.items[0] || c.admin[0])[0]); });
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
@@ -305,6 +306,7 @@ async function render() {
     if (view === 'perf') return await renderPerfDash();
     if (view === 'edu') return await renderEdu();
     if (view === 'eduprog') return await renderEduProg();
+    if (view === 'prac') return await renderPractice();
     if (view === 'daily' && me.role === 'admin') return await renderDaily();
     if (view === 'goods' && me.role === 'admin') return await renderGoods();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
@@ -816,44 +818,120 @@ async function renderEdu() {
   $app.querySelectorAll('[data-ldel]').forEach((b) => b.onclick = async () => { if (!confirm('이 기록을 지울까요?')) return; await deleteDoc(doc(db, 'eduLogs', b.dataset.ldel)); go('edu'); });
 }
 
+// eduPrograms/{id}: {order, category, title, desc, hours, type:'이론'|'실습', manualId, unit:'none'|'tooth'|'area', areas:[], slots:[], checks:[], target}
+// eduStatus/{progId}__{uid}: {status:'신청'|'일정 확정'|'확인 요청'|'수강 완료', schedule, doneDate, doneBy}
+// practice/{id}: 실습 기록 {progId, uid, name, date, unit, minutes, photos:{칸:imageId}, self:{항목:true}, memo, mentor:{name, scores, comment, result}}
+const isMentor = () => ['admin', 'chief', 'leader'].includes(me.role);
+const PRESET_PROGS = [
+  ['실습 · 치아별', '임시치아 제작', 'tooth', [], ['협측', '설측', '교합면', '근심', '원심'], ['마진 적합', '교합', '인접 접촉', '외형', '표면 매끄러움'], 5],
+  ['실습 · 치아별', '러버댐 장착', 'tooth', [], ['정면', '교합면'], ['클램프 선택', '치은 손상 없음', '누출 없음', '장착 시간'], 3],
+  ['실습 · 부위별', '구강 스캔', 'area', ['상악', '하악', '교합'], ['스캔 화면'], ['누락 부위 없음', '마진 선명', '교합 정렬'], 3],
+  ['실습 · 부위별', '치근단 방사선 촬영', 'area', ['상악 전치', '상악 소구치', '상악 대구치', '하악 전치', '하악 소구치', '하악 대구치'], ['영상'], ['겹침 없음', '근단 포함', '왜곡 없음'], 3],
+  ['실습 · 부위별', '스케일링', 'area', ['상악 우측', '상악 전치', '상악 좌측', '하악 좌측', '하악 전치', '하악 우측'], ['술전', '술후'], ['치석 잔존 없음', '치은 손상 최소', '환자 불편 확인'], 3],
+  ['실습 · 세트', '인상채득 (알지네이트)', 'none', [], ['상악', '하악'], ['기포 없음', '찢어짐 없음', '경계 포함'], 3],
+  ['실습 · 세트', '정밀 인상 (실리콘)', 'none', [], ['인상체'], ['기포 없음', '마진 재현', '찢어짐 없음'], 3],
+  ['실습 · 세트', '임상사진 5장 세트', 'none', [], ['정면', '좌측방', '우측방', '상악 교합면', '하악 교합면'], ['초점', '구도', '김서림 없음', '리트랙터 노출'], 3],
+  ['실습 · 세트', '석고 모형 제작', 'none', [], ['모형'], ['기포 없음', '기저부 정리', '치아 재현'], 2],
+  ['실습 · 세트', '교합 기록 채득', 'none', [], ['교합 기록'], ['정확한 위치', '변형 없음'], 2],
+  ['실습 · 세트', '임시 접착·제거', 'none', [], ['접착 후'], ['잉여 시멘트 제거', '교합 확인'], 2],
+  ['실습 · 세트', '보철 세팅 후 잉여 시멘트 제거', 'none', [], ['제거 후'], ['인접면 확인', '치은 손상 없음'], 2],
+  ['어시스트 흐름', '임플란트 수술 세팅·어시스트', 'none', [], ['세팅'], ['멸균 영역 유지', '드릴 순서', '식염수 냉각', '기구 전달'], 3],
+  ['어시스트 흐름', '근관치료 어시스트', 'none', [], [], ['파일 순서', '세척', '러버댐 유지'], 3],
+  ['어시스트 흐름', '레진 충전 어시스트', 'none', [], [], ['격리', '본딩 순서', '광중합 시간'], 3],
+  ['어시스트 흐름', '기구 세척·포장·멸균', 'none', [], ['포장 상태'], ['세척', '포장 표시', '멸균 지표 확인', '보관'], 2],
+  ['응대·안전', 'CC·노티 롤플레잉', 'none', [], [], ['CC 정리', '노티 순서', '전달 명확성'], 2],
+  ['응대·안전', '구강위생교육 (칫솔질 지도)', 'none', [], [], ['설명 순서', '시범', '환자 확인'], 2],
+  ['응대·안전', '수면진료 바이탈 모니터링', 'none', [], [], ['장비 연결', '수치 기록', '이상 시 보고'], 2],
+  ['응대·안전', '응급상황 대처', 'none', [], [], ['응급 키트 위치', '산소 투여 준비', '보고 순서'], 2],
+];
+const TEETH = [[18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28], [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38]];
+const levelOf = (p, s, recs) => {
+  if (s?.status === '수강 완료') return 4;
+  if (p.type !== '실습') return s ? 1 : 0;
+  if (recs.some((r) => r.mentor?.result === '통과')) return 3;
+  if (recs.length) return 2;
+  return s ? 1 : 0;
+};
+const LEVELS = ['시작 전', '관찰', '보조하에 시행', '단독 시행', '이수'];
+
 async function renderEduProg() {
-  const boss = isBoss();
-  const [ps, ss] = await Promise.all([getDocs(collection(db, 'eduPrograms')), getDocs(boss ? collection(db, 'eduStatus') : query(collection(db, 'eduStatus'), where('uid', '==', me.uid)))]);
-  const progs = ps.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || (a.title || '').localeCompare(b.title || '', 'ko'));
+  const mentor = isMentor(), admin = isBoss();
+  const who = mentor && sub?.who ? sub.who : me.uid;
+  const [ps, ss, rs, people] = await Promise.all([getDocs(collection(db, 'eduPrograms')),
+    getDocs(mentor ? collection(db, 'eduStatus') : query(collection(db, 'eduStatus'), where('uid', '==', me.uid))),
+    getDocs(query(collection(db, 'practice'), where('uid', '==', who))), mentor ? loadPeople() : Promise.resolve([])]);
+  await loadManual();
+  const progs = ps.docs.map((d) => ({ id: d.id, type: '이론', ...d.data() })).sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || (a.title || '').localeCompare(b.title || '', 'ko'));
   const st = ss.docs.map((d) => ({ id: d.id, ...d.data() }));
-  const my = (pid) => st.find((x) => x.progId === pid && x.uid === me.uid);
+  const recs = rs.docs.map((d) => d.data());
+  const sOf = (pid) => st.find((x) => x.progId === pid && x.uid === who);
   const cats = [...new Set(progs.map((p) => p.category || '기타'))];
-  const reqs = st.filter((x) => x.status !== '수강 완료');
-  const stCls = { '신청': 'st-ing', '일정 확정': 'st-ing', '수강 완료': 'st-ok' };
+  const pending = st.filter((x) => ['신청', '일정 확정', '확인 요청'].includes(x.status));
+  const staffList = people.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
+  const whoName = who === me.uid ? '나' : staffList.find((p) => p.uid === who)?.name || '';
+  const stCls = { '신청': 'st-ing', '일정 확정': 'st-ing', '확인 요청': 'st-ing', '수강 완료': 'st-ok' };
+  const row = (p) => {
+    const s = sOf(p.id), r = recs.filter((x) => x.progId === p.id), lv = levelOf(p, s, r), pass = r.filter((x) => x.mentor?.result === '통과').length;
+    const mine = who === me.uid;
+    const link = p.manualId && mcache.pages[p.manualId] ? `<a href="#" data-man="${p.manualId}">📖 매뉴얼</a>` : '';
+    return `<tr><td><b>${esc(p.title)}</b>${p.desc ? `<br><small class="muted">${esc(p.desc)}</small>` : ''}</td>
+      <td><span class="stTag ${p.type === '실습' ? 'st-ing' : ''}">${p.type}</span></td>
+      <td class="nowrap"><span class="lvDots">${[1, 2, 3, 4].map((i) => `<i class="${i <= lv ? 'on' : ''}"></i>`).join('')}</span> <small>${LEVELS[lv]}</small></td>
+      <td class="nowrap">${s && s.status !== '수강 완료' ? `<span class="stTag ${stCls[s.status]}">${esc(s.status)}</span>${s.schedule ? `<br><small>${esc(s.schedule)}</small>` : ''}${mine && ['신청', '확인 요청'].includes(s.status) ? ` <button class="ghost sm" data-cancel="${s.id}">취소</button>` : ''}`
+        : s ? '' : mine ? `<button class="primary sm" data-req="${p.id}">신청하기</button>` : '-'}</td>
+      <td class="nowrap">${s?.status === '수강 완료' ? `<b class="accent">✅ 이수</b><br><small class="muted">${esc(s.doneDate || '')} ${esc(s.doneBy || '')}</small>`
+        : `${p.type === '실습' ? `<small>통과 ${pass}${p.target ? '/' + p.target : ''}회</small><br>` : ''}${mentor && !mine ? `<button class="sm" data-cert="${p.id}">이수 인정</button>` : mine && !s ? `<button class="ghost sm" data-ask="${p.id}">${p.type === '실습' ? '이수 확인 요청' : '들었어요'}</button>` : ''}`}</td>
+      <td class="nowrap">${p.type === '실습' ? `<button class="ghost sm" data-prac="${p.id}">📷 기록 ${r.length ? `(${r.length})` : ''}</button>` : ''} ${link}${admin ? ` <button class="ghost sm" data-pe="${p.id}">✏️</button>` : ''}</td></tr>`;
+  };
   shell(`
-    <div class="row between"><div><p class="eyebrow">TRAINING</p><h1>원내 교육 프로그램</h1></div>${boss ? '<button class="primary" id="pAdd">+ 교육 추가</button>' : ''}</div>
-    <p class="muted">들은 교육은 <b>수강 완료</b>로, 아직 못 들은 교육은 <b>신청하기</b>를 눌러 주세요. 관리자·총괄실장이 일정을 잡아 드려요.</p>
-    ${boss ? `<section class="card reqBox"><h3>📨 신청·진행 중 ${reqs.length}건</h3>
-      ${reqs.map((x) => `<div class="reqRow"><div><b>${esc(x.name)}</b> · ${esc(x.title)} <span class="stTag ${stCls[x.status]}">${esc(x.status)}</span><br><span class="muted sm">${esc(x.reqDate || '')} 신청${x.schedule ? ` · 일정 ${esc(x.schedule)}` : ''}</span></div>
-        <div class="row"><input type="date" class="schIn" data-s="${x.id}" value="${esc(x.schedule || '')}" title="교육 일정"><button class="sm" data-sch="${x.id}">일정 저장</button><button class="primary sm" data-done="${x.id}">✅ 수강 완료</button></div></div>`).join('') || '<p class="muted">신청한 사람이 없어요.</p>'}</section>` : ''}
-    ${cats.map((c) => `<h3 class="dashH">${esc(c)}</h3><div class="card"><div class="tbl"><table class="mt incT progT"><tr><th>교육</th><th>내용</th>${boss ? '<th>수강 완료</th><th></th>' : '<th>내 상태</th>'}</tr>
-      ${progs.filter((p) => (p.category || '기타') === c).map((p) => { const s = my(p.id); const doneN = st.filter((x) => x.progId === p.id && x.status === '수강 완료');
-        return `<tr><td><b>${esc(p.title)}</b>${p.hours ? `<br><small class="muted">${p.hours}시간</small>` : ''}</td><td class="sm">${esc(p.desc || '')}</td>
-        ${boss ? `<td class="sm">${doneN.map((x) => esc(x.name)).join(', ') || '-'}</td><td class="nowrap"><button class="ghost sm" data-pe="${p.id}">✏️</button></td>`
-          : `<td class="nowrap">${s ? `<span class="stTag ${stCls[s.status]}">${esc(s.status)}</span>${s.schedule && s.status !== '수강 완료' ? `<br><small>일정 ${esc(s.schedule)}</small>` : ''}${s.status === '신청' ? ` <button class="ghost sm" data-cancel="${s.id}">취소</button>` : ''}`
-            : `<button class="primary sm" data-req="${p.id}">신청하기</button> <button class="ghost sm" data-self="${p.id}">들었어요</button>`}</td>`}</tr>`; }).join('')}</table></div></div>`).join('') || '<section class="card muted">아직 등록된 교육이 없어요.</section>'}`);
-  const setSt = (p, status) => setDoc(doc(db, 'eduStatus', `${p.id}__${me.uid}`), { progId: p.id, uid: me.uid, name: me.name, title: p.title, status, reqDate: today(), ...(status === '수강 완료' ? { doneDate: today() } : {}) });
-  $app.querySelectorAll('[data-req]').forEach((b) => b.onclick = async () => { await setSt(progs.find((p) => p.id === b.dataset.req), '신청'); toast('신청했어요'); go('eduprog'); });
-  $app.querySelectorAll('[data-self]').forEach((b) => b.onclick = async () => { await setSt(progs.find((p) => p.id === b.dataset.self), '수강 완료'); toast('수강 완료로 기록했어요'); go('eduprog'); });
+    <div class="row between"><div><p class="eyebrow">TRAINING</p><h1>원내 교육 프로그램</h1></div>
+      <div class="row">${mentor ? `<select id="who" style="width:auto" title="누구의 기록을 볼까요"><option value="${me.uid}" ${who === me.uid ? 'selected' : ''}>내 교육</option>${staffList.filter((p) => p.uid !== me.uid).map((p) => `<option value="${p.uid}" ${who === p.uid ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : ''}
+        ${admin ? '<button class="primary" id="pAdd">+ 교육 추가</button>' : ''}</div></div>
+    <p class="muted">진행 단계: 관찰 → 보조하에 시행 → 단독 시행 → 이수. 실습은 <b>📷 기록</b>에 사진과 자가 체크를 남기면 멘토(관리자·총괄실장·팀장)가 피드백하고, 멘토가 <b>이수 인정</b>을 눌러야 이수돼요.</p>
+    ${mentor && pending.length ? `<section class="card reqBox"><h3>📨 신청·확인 요청 ${pending.length}건</h3>
+      ${pending.map((x) => `<div class="reqRow"><div><b>${esc(x.name)}</b> · ${esc(x.title)} <span class="stTag ${stCls[x.status]}">${esc(x.status)}</span><br><span class="muted sm">${esc(x.reqDate || '')}${x.schedule ? ` · 일정 ${esc(x.schedule)}` : ''}</span></div>
+        <div class="row"><input type="date" class="schIn" data-s="${x.id}" value="${esc(x.schedule || '')}"><button class="sm" data-sch="${x.id}">일정 저장</button><button class="sm" data-open="${x.uid}">기록 보기</button><button class="primary sm" data-certs="${x.id}">✅ 이수 인정</button></div></div>`).join('')}</section>` : ''}
+    ${who !== me.uid ? `<p class="reqNow">👀 <b>${esc(whoName)}</b>님의 교육 현황이에요.</p>` : ''}
+    ${cats.map((c) => `<h3 class="dashH">${esc(c)}</h3><div class="card"><div class="tbl"><table class="mt incT progT"><tr><th>교육</th><th>구분</th><th>진행 단계</th><th>신청</th><th>이수</th><th></th></tr>
+      ${progs.filter((p) => (p.category || '기타') === c).map(row).join('')}</table></div></div>`).join('') || '<section class="card muted">아직 등록된 교육이 없어요.</section>'}
+    ${admin ? `<section class="card"><h3>교육 목록 빠르게 만들기</h3><div class="row"><button id="seedPrac">🧪 추천 실습 ${PRESET_PROGS.length}개 넣기</button><button id="seedMan">📖 매뉴얼 목차로 이론 교육 만들기</button></div>
+      <p class="muted sm">이미 같은 이름이 있으면 건너뛰어요. 넣은 뒤 ✏️로 고치거나 지울 수 있어요.</p></section>` : ''}`);
+  const statusRef = (pid, uid) => doc(db, 'eduStatus', `${pid}__${uid}`);
+  const setMine = (p, status) => setDoc(statusRef(p.id, me.uid), { progId: p.id, uid: me.uid, name: me.name, title: p.title, status, reqDate: today() });
+  document.getElementById('who')?.addEventListener('change', (e) => go('eduprog', { who: e.target.value }));
+  $app.querySelectorAll('[data-man]').forEach((a) => a.onclick = (e) => { e.preventDefault(); go('manual', { id: a.dataset.man }); });
+  $app.querySelectorAll('[data-req]').forEach((b) => b.onclick = async () => { await setMine(progs.find((p) => p.id === b.dataset.req), '신청'); toast('신청했어요'); go('eduprog'); });
+  $app.querySelectorAll('[data-ask]').forEach((b) => b.onclick = async () => { await setMine(progs.find((p) => p.id === b.dataset.ask), '확인 요청'); toast('멘토에게 이수 확인을 요청했어요'); go('eduprog'); });
   $app.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = async () => { await deleteDoc(doc(db, 'eduStatus', b.dataset.cancel)); go('eduprog'); });
-  $app.querySelectorAll('[data-sch]').forEach((b) => b.onclick = async () => { const v = $app.querySelector(`.schIn[data-s="${b.dataset.sch}"]`).value; await updateDoc(doc(db, 'eduStatus', b.dataset.sch), { schedule: v, status: v ? '일정 확정' : '신청' }); toast('일정을 저장했어요'); go('eduprog'); });
-  $app.querySelectorAll('[data-done]').forEach((b) => b.onclick = async () => { await updateDoc(doc(db, 'eduStatus', b.dataset.done), { status: '수강 완료', doneDate: today(), doneBy: me.name }); toast('수강 완료로 처리했어요'); go('eduprog'); });
+  $app.querySelectorAll('[data-prac]').forEach((b) => b.onclick = () => go('prac', { pid: b.dataset.prac, uid: who }));
+  $app.querySelectorAll('[data-open]').forEach((b) => b.onclick = () => go('eduprog', { who: b.dataset.open }));
+  $app.querySelectorAll('[data-sch]').forEach((b) => b.onclick = async () => { const v = $app.querySelector(`.schIn[data-s="${b.dataset.sch}"]`).value; await updateDoc(doc(db, 'eduStatus', b.dataset.sch), { schedule: v, status: v ? '일정 확정' : '신청' }); toast('일정을 저장했어요'); go('eduprog', { who }); });
+  const certify = async (pid, uid, name, title) => { if (!confirm(`${name}님의 "${title}"을(를) 이수 인정할까요?`)) return false;
+    await setDoc(statusRef(pid, uid), { progId: pid, uid, name, title, status: '수강 완료', doneDate: today(), doneBy: me.name }, { merge: true }); toast('이수 인정했어요'); return true; };
+  $app.querySelectorAll('[data-certs]').forEach((b) => b.onclick = async () => { const x = st.find((y) => y.id === b.dataset.certs); if (await certify(x.progId, x.uid, x.name, x.title)) go('eduprog', { who }); });
+  $app.querySelectorAll('[data-cert]').forEach((b) => b.onclick = async () => { const p = progs.find((y) => y.id === b.dataset.cert); if (await certify(p.id, who, whoName, p.title)) go('eduprog', { who }); });
   const edit = (p) => {
     const w = document.createElement('div'); w.className = 'modal';
+    const L = (a) => (a || []).join(', ');
     w.innerHTML = `<div class="modalBox form"><h2>${p ? '교육 수정' : '교육 추가'}</h2>
-      <label>분류<input id="qCat" list="qCats" value="${esc(p?.category || '')}" placeholder="예: 신입 필수, 어시스트, 상담"><datalist id="qCats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
-      <label>교육 이름<input id="qTitle" value="${esc(p?.title || '')}"></label><label>내용<textarea id="qDesc" rows="3">${esc(p?.desc || '')}</textarea></label>
+      <div class="two"><label>분류<input id="qCat" list="qCats" value="${esc(p?.category || '')}" placeholder="예: 신입 필수, 실습 · 치아별"><datalist id="qCats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
+        <label>구분<select id="qType"><option ${p?.type !== '실습' ? 'selected' : ''}>이론</option><option ${p?.type === '실습' ? 'selected' : ''}>실습</option></select></label></div>
+      <label>교육 이름<input id="qTitle" value="${esc(p?.title || '')}"></label><label>설명<input id="qDesc" value="${esc(p?.desc || '')}"></label>
+      <label>연결할 매뉴얼 (선택)<select id="qMan"><option value="">(없음)</option>${mPages().sort(mSort).map((m) => `<option value="${m.id}" ${p?.manualId === m.id ? 'selected' : ''}>${esc(m.group)} · ${esc(m.title)}</option>`).join('')}</select></label>
+      <div class="pracOnly"><div class="two"><label>반복 단위<select id="qUnit"><option value="none" ${(p?.unit || 'none') === 'none' ? 'selected' : ''}>없음</option><option value="tooth" ${p?.unit === 'tooth' ? 'selected' : ''}>치아번호별</option><option value="area" ${p?.unit === 'area' ? 'selected' : ''}>부위별</option></select></label>
+        <label>목표 통과 횟수<input id="qTarget" inputmode="numeric" value="${p?.target || ''}"></label></div>
+        <label>부위 목록 (부위별일 때, 쉼표로)<input id="qAreas" value="${esc(L(p?.areas))}" placeholder="상악, 하악, 교합"></label>
+        <label>사진 칸 (쉼표로)<input id="qSlots" value="${esc(L(p?.slots))}" placeholder="협측, 설측, 교합면"></label>
+        <label>체크 항목 (쉼표로)<input id="qChecks" value="${esc(L(p?.checks))}" placeholder="마진 적합, 교합, 인접 접촉"></label></div>
       <div class="two"><label>시간<input id="qHours" inputmode="decimal" value="${p?.hours || ''}"></label><label>순서<input id="qOrder" inputmode="numeric" value="${p?.order ?? progs.length + 1}"></label></div>
       <div class="row"><button class="primary" id="qSave">저장</button><button class="ghost" id="qX">취소</button>${p ? '<button class="ghost danger" id="qDel">삭제</button>' : ''}</div></div>`;
     document.body.appendChild(w);
+    const tog = () => { w.querySelector('.pracOnly').style.display = val('qType') === '실습' ? '' : 'none'; }; document.getElementById('qType').onchange = tog; tog();
+    const arr = (id) => val(id).split(',').map((x) => x.trim()).filter(Boolean);
     document.getElementById('qX').onclick = () => w.remove();
     document.getElementById('qSave').onclick = async () => {
-      const data = { category: val('qCat') || '기타', title: val('qTitle'), desc: document.getElementById('qDesc').value.trim(), hours: num(val('qHours')), order: num(val('qOrder')) };
+      const data = { category: val('qCat') || '기타', type: val('qType'), title: val('qTitle'), desc: val('qDesc'), manualId: val('qMan'), hours: num(val('qHours')), order: num(val('qOrder')),
+        unit: val('qUnit'), target: num(val('qTarget')), areas: arr('qAreas'), slots: arr('qSlots'), checks: arr('qChecks') };
       if (!data.title) return toast('교육 이름을 적어 주세요');
       if (p) await setDoc(doc(db, 'eduPrograms', p.id), data); else await addDoc(collection(db, 'eduPrograms'), data);
       w.remove(); go('eduprog');
@@ -862,6 +940,98 @@ async function renderEduProg() {
   };
   document.getElementById('pAdd')?.addEventListener('click', () => edit(null));
   $app.querySelectorAll('[data-pe]').forEach((b) => b.onclick = () => edit(progs.find((p) => p.id === b.dataset.pe)));
+  const have = new Set(progs.map((p) => p.title));
+  document.getElementById('seedPrac')?.addEventListener('click', async () => {
+    let n = 0, o = progs.length;
+    for (const [category, title, unit, areas, slots, checks, target] of PRESET_PROGS) {
+      if (have.has(title)) continue;
+      await addDoc(collection(db, 'eduPrograms'), { category, title, type: '실습', unit, areas, slots, checks, target, order: 100 + (o++), desc: '' }); n++;
+    }
+    toast(`${n}개를 넣었어요`); go('eduprog');
+  });
+  document.getElementById('seedMan')?.addEventListener('click', async () => {
+    const pages = mPages().sort(mSort).filter((m) => !have.has(m.title));
+    if (!confirm(`매뉴얼 ${pages.length}개 페이지로 이론 교육을 만들까요?`)) return;
+    let o = 0;
+    for (const m of pages) await addDoc(collection(db, 'eduPrograms'), { category: `이론 · ${m.group}`, title: m.title, type: '이론', manualId: m.id, order: o++, desc: m.sub || '' });
+    toast(`${pages.length}개를 만들었어요`); go('eduprog');
+  });
+}
+
+// 실습 기록 (사진·자가 체크·멘토 피드백, 치아별로 쌓임)
+async function renderPractice() {
+  const pid = sub?.pid, mentor = isMentor();
+  const who = mentor && sub?.uid ? sub.uid : me.uid;
+  const [pd, rs, people, sd] = await Promise.all([getDoc(doc(db, 'eduPrograms', pid)), getDocs(query(collection(db, 'practice'), where('uid', '==', who))), mentor ? loadPeople() : Promise.resolve([]), getDoc(doc(db, 'eduStatus', `${pid}__${who}`))]);
+  if (!pd.exists()) return go('eduprog');
+  const p = { id: pd.id, ...pd.data() };
+  const status = sd.exists() ? sd.data() : null;
+  const all = rs.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.progId === pid).sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.n || 0) - (a.n || 0));
+  const whoName = who === me.uid ? me.name : people.find((x) => x.uid === who)?.name || '';
+  const unitSel = sub?.unit || '';
+  const list = unitSel ? all.filter((r) => String(r.unit) === String(unitSel)) : all;
+  const stat = (u) => { const rr = all.filter((r) => String(r.unit) === String(u)); return { n: rr.length, pass: rr.some((r) => r.mentor?.result === '통과') }; };
+  const chip = (u) => { const s = stat(u); return `<button class="tooth ${s.pass ? 'pass' : s.n ? 'try' : ''} ${String(unitSel) === String(u) ? 'on' : ''}" data-unit="${esc(u)}">${esc(u)}${s.n ? `<small>${s.n}</small>` : ''}</button>`; };
+  const unitPicker = p.unit === 'tooth' ? `<div class="teeth">${TEETH.map((row) => `<div class="trow2">${row.map((t, i) => (i === 8 ? '<span class="mid"></span>' : '') + chip(t)).join('')}</div>`).join('')}</div>`
+    : p.unit === 'area' ? `<div class="chips">${(p.areas || []).map(chip).join('')}</div>` : '';
+  const mine = who === me.uid;
+  const scoreSel = (rid, c, v) => `<select class="sc" data-r="${rid}" data-c="${esc(c)}"><option value="">-</option>${['상', '중', '하'].map((x) => `<option ${v === x ? 'selected' : ''}>${x}</option>`).join('')}</select>`;
+  shell(`
+    <div class="row between"><div><p class="eyebrow">PRACTICE LOG</p><h1>${esc(p.title)} <small class="muted">${esc(whoName)}</small></h1></div>
+      <div class="row"><button class="ghost" id="back">← 교육 목록</button>${mentor && !mine && status?.status !== '수강 완료' ? '<button class="primary" id="cert">✅ 이수 인정</button>' : ''}</div></div>
+    <div class="kpis"><div class="kpi"><span>기록</span><b>${all.length}회</b></div><div class="kpi"><span>통과</span><b class="accent">${all.filter((r) => r.mentor?.result === '통과').length}${p.target ? ' / ' + p.target : ''}회</b></div>
+      <div class="kpi"><span>이수</span><b>${status?.status === '수강 완료' ? `✅ ${esc(status.doneDate || '')}` : '아직'}</b></div></div>
+    ${unitPicker ? `<section class="card"><div class="row between"><h3>${p.unit === 'tooth' ? '🦷 치아별 기록' : '📍 부위별 기록'}</h3>${unitSel ? `<button class="ghost sm" data-unit="">전체 보기</button>` : ''}</div>${unitPicker}
+      <p class="muted sm"><span class="tooth try sample">연습</span> 기록 있음 · <span class="tooth pass sample">통과</span> 멘토 통과 · 숫자는 기록 횟수. 누르면 그 ${p.unit === 'tooth' ? '치아' : '부위'} 기록만 보여요.</p></section>` : ''}
+    ${mine ? `<details class="card" id="wbox" ${all.length ? '' : 'open'}><summary class="primaryLink">➕ 새 실습 기록</summary><div class="form">
+      <div class="row wrapRow"><label>날짜<input type="date" id="rDate" value="${today()}"></label>
+        ${p.unit === 'tooth' ? `<label>치아번호<input id="rUnit" inputmode="numeric" value="${esc(unitSel)}" placeholder="예: 36"></label>` : p.unit === 'area' ? `<label>부위<select id="rUnit">${(p.areas || []).map((a) => `<option ${a === unitSel ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select></label>` : ''}
+        <label>걸린 시간(분)<input id="rMin" inputmode="numeric"></label></div>
+      ${(p.slots || []).length ? `<div class="slotGrid">${p.slots.map((s, i) => `<label class="slot"><span>${esc(s)}</span><input type="file" accept="image/*" data-slot="${i}" hidden><div class="ph" data-ph="${i}">📷<br><small>사진 올리기</small></div></label>`).join('')}</div>` : ''}
+      ${(p.checks || []).length ? `<div class="selfChk"><b class="sm">자가 체크</b>${p.checks.map((c) => `<label><input type="checkbox" data-chk="${esc(c)}"> ${esc(c)}</label>`).join('')}</div>` : ''}
+      <label>메모 (어려웠던 점 등)<textarea id="rMemo" rows="2"></textarea></label>
+      <button class="primary" id="rSave">기록 저장</button></div></details>` : ''}
+    <h3 class="dashH">${unitSel ? `${p.unit === 'tooth' ? '#' : ''}${esc(unitSel)} ` : ''}기록 ${list.length}건</h3>
+    ${list.map((r) => `<section class="card pracCard"><div class="row between"><div><b>${esc(r.date)}</b>${r.unit ? ` · <span class="stTag">${p.unit === 'tooth' ? '#' : ''}${esc(r.unit)}</span>` : ''}${r.minutes ? ` · ${r.minutes}분` : ''}</div>
+        ${r.mentor?.result ? `<span class="stTag ${r.mentor.result === '통과' ? 'st-ok' : 'st-hold'}">${esc(r.mentor.result)}</span>` : '<span class="muted sm">피드백 대기</span>'}</div>
+      ${Object.keys(r.photos || {}).length ? `<div class="photoRow">${Object.entries(r.photos).map(([s, id]) => `<figure><img data-img="${id}" alt=""><figcaption>${esc(s)}</figcaption></figure>`).join('')}</div>` : ''}
+      ${(p.checks || []).length ? `<table class="mt incT chkT"><tr><th>항목</th><th>자가 체크</th><th>멘토 평가</th></tr>${p.checks.map((c) => `<tr><td>${esc(c)}</td><td>${r.self?.[c] ? '✓' : ''}</td><td>${mentor ? scoreSel(r.id, c, r.mentor?.scores?.[c]) : esc(r.mentor?.scores?.[c] || '')}</td></tr>`).join('')}</table>` : ''}
+      ${r.memo ? `<p class="ntext sm">📝 ${esc(r.memo)}</p>` : ''}
+      ${r.mentor?.comment && !mentor ? `<div class="box tip"><p><b>💬 ${esc(r.mentor.name || '멘토')} 피드백</b></p><p class="ntext">${esc(r.mentor.comment)}</p></div>` : ''}
+      ${mentor ? `<textarea class="fb" data-fb="${r.id}" rows="2" placeholder="멘토 피드백">${esc(r.mentor?.comment || '')}</textarea>
+        <div class="row"><button class="primary sm" data-res="${r.id}" data-v="통과">✅ 통과</button><button class="ghost sm" data-res="${r.id}" data-v="재시도">🔁 재시도</button>${r.mentor?.name ? `<span class="muted sm">${esc(r.mentor.name)} · ${esc(r.mentor.date || '')}</span>` : ''}</div>` : ''}
+      ${mine && !r.mentor?.result ? `<button class="ghost sm" data-rdel="${r.id}">삭제</button>` : ''}</section>`).join('') || '<section class="card muted">아직 기록이 없어요.</section>'}`);
+  $app.querySelectorAll('.pracCard').forEach((c) => hydrateImages(c));
+  document.getElementById('back').onclick = () => go('eduprog', { who });
+  $app.querySelectorAll('[data-unit]').forEach((b) => b.onclick = () => go('prac', { pid, uid: who, unit: b.dataset.unit }));
+  document.getElementById('cert')?.addEventListener('click', async () => {
+    if (!confirm(`${whoName}님의 "${p.title}"을(를) 이수 인정할까요?`)) return;
+    await setDoc(doc(db, 'eduStatus', `${pid}__${who}`), { progId: pid, uid: who, name: whoName, title: p.title, status: '수강 완료', doneDate: today(), doneBy: me.name }, { merge: true });
+    toast('이수 인정했어요'); go('prac', { pid, uid: who });
+  });
+  const photos = {};
+  $app.querySelectorAll('[data-slot]').forEach((inp) => inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return; const i = +inp.dataset.slot;
+    photos[i] = await compressImage(f);
+    $app.querySelector(`[data-ph="${i}"]`).innerHTML = `<img src="${photos[i]}" alt="">`;
+  });
+  document.getElementById('rSave')?.addEventListener('click', async () => {
+    const unit = p.unit === 'none' ? '' : val('rUnit');
+    if (p.unit !== 'none' && !unit) return toast(p.unit === 'tooth' ? '치아번호를 넣어 주세요' : '부위를 골라 주세요');
+    const btn = document.getElementById('rSave'); btn.disabled = true;
+    const ph = {};
+    for (const [i, data] of Object.entries(photos)) { const id = 'pimg-' + Date.now().toString(36) + i + Math.random().toString(36).slice(2, 5); await setDoc(doc(db, 'practiceImages', id), { uid: me.uid, data, at: serverTimestamp() }); ph[p.slots[i]] = id; mimg[id] = data; }
+    const self = {}; $app.querySelectorAll('[data-chk]').forEach((c) => { if (c.checked) self[c.dataset.chk] = true; });
+    await addDoc(collection(db, 'practice'), { progId: pid, title: p.title, uid: me.uid, name: me.name, date: val('rDate'), unit: p.unit === 'tooth' ? unit.replace(/\D/g, '') : unit, minutes: num(val('rMin')), photos: ph, self, memo: document.getElementById('rMemo').value.trim(), n: Date.now(), at: serverTimestamp() });
+    toast('기록했어요. 멘토 피드백을 기다려요'); go('prac', { pid, uid: who, unit: p.unit === 'tooth' ? unit.replace(/\D/g, '') : unit });
+  });
+  $app.querySelectorAll('[data-res]').forEach((b) => b.onclick = async () => {
+    const id = b.dataset.res, scores = {};
+    $app.querySelectorAll(`.sc[data-r="${id}"]`).forEach((s) => { if (s.value) scores[s.dataset.c] = s.value; });
+    await updateDoc(doc(db, 'practice', id), { mentor: { name: me.name, date: today(), result: b.dataset.v, comment: $app.querySelector(`[data-fb="${id}"]`).value.trim(), scores } });
+    toast(`${b.dataset.v}(으)로 저장했어요`); go('prac', { pid, uid: who, unit: unitSel });
+  });
+  $app.querySelectorAll('[data-rdel]').forEach((b) => b.onclick = async () => { if (!confirm('이 기록을 지울까요?')) return; await deleteDoc(doc(db, 'practice', b.dataset.rdel)); go('prac', { pid, uid: who, unit: unitSel }); });
 }
 
 // ---------- 일계표 · 대시보드 (관리자·총괄실장) ----------
@@ -1857,7 +2027,7 @@ async function hydrateImages(root) {
   for (const img of root.querySelectorAll('img[data-img]')) {
     const id = img.dataset.img;
     if (!mimg[id]) {
-      try { const d = await getDoc(doc(db, id.startsWith('eimg-') ? 'eduImages' : 'manualImages', id)); if (d.exists()) mimg[id] = d.data().data; } catch (e) { /* 무시 */ }
+      try { const d = await getDoc(doc(db, id.startsWith('eimg-') ? 'eduImages' : id.startsWith('pimg-') ? 'practiceImages' : 'manualImages', id)); if (d.exists()) mimg[id] = d.data().data; } catch (e) { /* 무시 */ }
     }
     if (mimg[id]) img.src = mimg[id];
   }

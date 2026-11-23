@@ -727,3 +727,20 @@ table.statT td { text-align: right; }
 .eduEd { min-height: 220px; max-width: none; }
 .eduView { max-width: none; padding: 1rem 1.2rem; margin-top: .6rem; }
 #wbox .etb { position: static; max-width: none; }
+/* 교육·실습 */
+.lvDots { display: inline-flex; gap: 3px; vertical-align: middle; } .lvDots i { width: .6rem; height: .6rem; border-radius: 50%; background: #e2e6e6; } .lvDots i.on { background: var(--c); }
+.teeth { display: flex; flex-direction: column; gap: .4rem; align-items: center; overflow-x: auto; padding: .5rem 0; }
+.trow2 { display: flex; gap: .25rem; align-items: center; }
+.trow2 .mid { width: 2px; height: 2.2rem; background: var(--line); margin: 0 .3rem; }
+.tooth { width: 2.6rem; height: 2.6rem; padding: 0; border-radius: 8px; border: 1px solid var(--line); background: #fff; font-size: .85rem; font-weight: 700; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; }
+.tooth small { font-size: .65rem; font-weight: 400; }
+.tooth.try { background: #fff3c4; border-color: #f0c040; } .tooth.pass { background: #d6f0df; border-color: #4caf72; } .tooth.on { outline: 3px solid var(--c); }
+.tooth.sample { width: auto; height: auto; padding: 0 .4rem; display: inline-block; }
+.slotGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .6rem; margin: .6rem 0; }
+.slot { margin: 0; cursor: pointer; text-align: center; } .slot span { display: block; font-size: .82rem; font-weight: 700; margin-bottom: .25rem; }
+.slot .ph { border: 2px dashed var(--line); border-radius: 10px; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; color: var(--muted); overflow: hidden; }
+.slot .ph img { width: 100%; height: 100%; object-fit: cover; }
+.selfChk { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: center; margin: .5rem 0; } .selfChk label { margin: 0; font-weight: 400; display: inline-flex; gap: .3rem; align-items: center; } .selfChk input { width: auto; margin: 0; }
+.photoRow { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .5rem; margin: .6rem 0; }
+.photoRow figure { margin: 0; text-align: center; } .photoRow img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; cursor: zoom-in; } .photoRow figcaption { font-size: .75rem; color: var(--muted); }
+.chkT { font-size: .85rem; } .chkT select { width: auto; margin: 0; padding: .2rem .4rem; }
