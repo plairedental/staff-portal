@@ -764,3 +764,14 @@ body { word-break: keep-all; overflow-wrap: anywhere; }
   .incFormula b { font-size: 1.1rem; }
   .rateRow { gap: .5rem; }
 }
+.fresh { background: #e9f5ef; border-radius: 10px; padding: .55rem .9rem; margin: .4rem 0 1rem; font-size: .92rem; }
+.fresh.warn { background: #fff4d6; border: 1px solid #f0c040; }
+.hbar { display: grid; grid-template-columns: 7.5rem 1fr 2.5rem; align-items: center; gap: .5rem; margin: .3rem 0; font-size: .86rem; }
+.hbar i { height: .8rem; background: var(--c); border-radius: 4px; display: block; } .hbar b { text-align: right; }
+.kpiN { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; }
+.kpi b small { font-size: .7em; font-weight: 400; margin-left: .15rem; }
+.kpiRow { gap: .4rem; margin: .3rem 0; } .kpiRow input, .kpiRow select { margin: 0; width: auto; flex: 1; }
+.dashGrid.three { grid-template-columns: repeat(3, 1fr); } @media (max-width: 900px) { .dashGrid.three { grid-template-columns: 1fr; } }
+.tbars { display: flex; align-items: flex-end; gap: .5rem; height: 140px; }
+.tbars > div { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; font-size: .75rem; }
+.tbars i { display: block; width: 70%; background: var(--c); border-radius: 4px 4px 0 0; min-height: 2px; } .tbars b { margin-top: .2rem; } .tbars small { color: var(--muted); }

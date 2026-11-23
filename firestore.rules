@@ -154,6 +154,10 @@ service cloud.firestore {
     match /purchases/{id} {
       allow read, write: if isAdmin();
     }
+    // 덴트웹 월 요약(실인원·신환·내원경로): 관리자만
+    match /dwMonth/{id} {
+      allow read, write: if isAdmin();
+    }
     // 목표매출·인센티브 설정: 관리자만
     match /incentive/{id} {
       allow read, write: if isAdmin();
