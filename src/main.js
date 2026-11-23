@@ -634,7 +634,7 @@ function dailyTotals(d) {
   const gd = { cash: 0, transfer: 0, card: 0 };
   (d.goods || []).forEach((g) => { const k = g.pay === '카드' ? 'card' : g.pay === '계좌이체' ? 'transfer' : 'cash'; gd[k] += goodsFinal(g); });
   const dw = d.dw || {};
-  const chart = num(dw.card) + num(dw.cash) + num(dw.other) + num(dw.receipt);
+  const chart = num(dw.card) + num(dw.cash) + num(dw.other);   // 현금영수증은 현금수납 안에 포함된 금액이라 더하지 않음
   const manual = inc.cash + inc.transfer + inc.card + gd.cash + gd.transfer + gd.card;
   const cashIn = inc.cash + gd.cash + num(dw.cash);
   const cashOut = dsum(d.expense, 'amount');
@@ -648,7 +648,7 @@ async function renderDaily() {
   const month = date.slice(0, 7);
   const [y, m] = month.split('-').map(Number);
   const [ms, ds, people, products] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'daily', date)), loadPeople(), loadProducts(true)]);
-  const has = {}; ms.docs.forEach((x) => { has[x.id] = dailyTotals(x.data()).total; });
+  const has = {}; ms.docs.forEach((x) => { const v = x.data(); has[x.id] = num(v.dw?.fee) || dailyTotals(v).total; });
   const d = ds.exists() ? JSON.parse(JSON.stringify(ds.data())) : {};
   const blank = { income: () => ({ chart: '', name: '', cash: 0, transfer: 0, card: 0, memo: '' }), goods: () => ({ chart: '', name: '', assist: '', product: '', staff: false, price: 0, qty: 1, disc: 0, pay: '', memo: '' }), expense: () => ({ item: '', amount: 0, memo: '' }) };
   ['income', 'goods', 'expense'].forEach((k) => { d[k] ||= []; while (d[k].length < 3) d[k].push(blank[k]()); });
@@ -669,7 +669,7 @@ async function renderDaily() {
     <div class="dailyGrid">
       <aside class="card dCal"><div class="row between"><button class="ghost sm" id="cPrev">◀</button><b>${y}년 ${m}월</b><button class="ghost sm" id="cNext">▶</button></div>
         <div class="calGrid">${['일', '월', '화', '수', '목', '금', '토'].map((w) => `<span>${w}</span>`).join('')}${'<span></span>'.repeat(first)}${Array.from({ length: days }, (_, i) => dayCell(i + 1)).join('')}</div>
-        <p class="muted sm"><span class="dot has"></span> 입력된 날 · 이번 달 합계 <b>${comma(Object.values(has).reduce((a, b) => a + b, 0))}</b>원</p></aside>
+        <p class="muted sm"><span class="dot has"></span> 입력된 날 · 이번 달 합계(총진료비) <b>${comma(Object.values(has).reduce((a, b) => a + b, 0))}</b>원</p></aside>
       <div>
         <section class="card"><h3>수입 입력 <small class="muted">환불은 −로 적어요 (예: -10000)</small></h3>
           <div class="tbl"><table class="mt dT" id="tIncome"><tr><th>#</th><th>차트번호</th><th>이름</th><th class="r">현금수납</th><th class="r">계좌이체</th><th class="r">카드수납</th><th>메모</th><th></th></tr>
@@ -697,8 +697,17 @@ async function renderDaily() {
           <button class="ghost sm" data-add="expense">+ 행 추가</button></section>
 
         <section class="card"><h3>덴트웹 자료 올리기</h3>
-          <p class="muted sm">덴트웹 <b>진료비 통계</b>·<b>수납 통계</b> 엑셀을 올리면 아래 전자차트 수납액과 직원별 매출이 자동으로 채워지게 연결할 예정이에요. 아직 덴트웹 파일 모양을 받지 못해서, 지금은 아래 전자차트 칸에 직접 넣어 주세요.</p>
-          <div class="row"><button class="ghost" disabled>📤 진료비 통계 (준비 중)</button><button class="ghost" disabled>📤 수납 통계 (준비 중)</button></div></section>
+          <p class="muted sm">덴트웹 <b>진료일 기준 통계</b> 또는 <b>수납일 기준 통계</b> 엑셀을 올리세요. 한 달 파일을 올리면 날짜별로 나눠서 각 날짜에 채워져요. 환자 이름은 저장하지 않고 합계만 저장해요.</p>
+          <div class="row"><label class="upload">📤 덴트웹 통계 엑셀 올리기<input type="file" id="dwFile" accept=".xlsx,.xls" hidden></label>
+            <span class="muted sm">${d.dw.feeAt ? `진료 통계 ${esc(d.dw.feeAt)} 반영 · ` : ''}${d.dw.payAt ? `수납 통계 ${esc(d.dw.payAt)} 반영` : ''}</span></div>
+          ${d.dw.fee !== undefined ? `<div class="dwSum">
+            <div><span>총진료비</span><b>${comma(num(d.dw.fee))}</b></div><div><span>공단 청구액</span><b>${comma(num(d.dw.claim))}</b></div><div><span>본인부담</span><b>${comma(num(d.dw.copay))}</b></div>
+            <div><span>비급여</span><b>${comma(num(d.dw.nonpay))}</b></div><div><span>할인</span><b>${comma(num(d.dw.discount))}</b></div><div><span>미수(+)/선수(−)</span><b>${comma(num(d.dw.unpaid))}</b></div>
+            <div><span>환자 수</span><b>${num(d.dw.patients)}명</b></div><div><span>신환</span><b>${num(d.dw.newPatients)}명</b></div></div>
+            <p class="sm"><b>원장별</b> ${Object.entries(d.dw.byDoctor || {}).map(([k, v]) => `${esc(k)} ${comma(v)}`).join(' · ')}</p>
+            <p class="sm"><b>담당직원별</b> ${Object.entries(d.dw.byStaff || {}).sort((a, b2) => b2[1] - a[1]).map(([k, v]) => `${esc(k)} ${comma(v)}`).join(' · ')}</p>
+            ${Object.keys(d.dw.routes || {}).length ? `<p class="sm"><b>신환 내원경로</b> ${Object.entries(d.dw.routes).map(([k, v]) => `${esc(k)} ${v}`).join(' · ')}</p>` : ''}` : ''}
+        </section>
 
         <section class="card"><h3>일계 마감</h3>
           <div class="tbl"><table class="mt dT closeT"><tr><th>전일 시재</th><th>현금수납</th><th>현금지출</th><th>원장님 드린 돈</th><th>당일 시재</th></tr>
@@ -709,7 +718,7 @@ async function renderDaily() {
         <section class="card"><h3>매출 통계</h3>
           <div class="tbl"><table class="mt dT statT">
             <tr><th rowspan="2">총 매출</th><th colspan="4" class="blueH">전자차트 총 수납액</th><th colspan="3" class="yelH">수동 총 수납액 (수입 + 구강용품)</th></tr>
-            <tr><th class="blueH">카드수납</th><th class="blueH">현금수납</th><th class="blueH">기타(온라인)</th><th class="blueH">현금영수증</th><th class="yelH">현금</th><th class="yelH">계좌이체</th><th class="yelH">카드</th></tr>
+            <tr><th class="blueH">카드수납</th><th class="blueH">현금수납</th><th class="blueH">기타(온라인)</th><th class="blueH">현금영수증<br><small>(현금 중 발행분)</small></th><th class="yelH">현금</th><th class="yelH">계좌이체</th><th class="yelH">카드</th></tr>
             <tr><td class="r"><b id="sTotal"></b></td>${['card', 'cash', 'other', 'receipt'].map((k) => `<td><input class="dIn r" data-dw="${k}" inputmode="numeric" value="${num(d.dw[k]) ? comma(num(d.dw[k])) : ''}" placeholder="0"></td>`).join('')}<td class="r" id="sMc"></td><td class="r" id="sMt"></td><td class="r" id="sMk"></td></tr>
           </table></div>
           <p class="muted sm">전자차트 금액은 덴트웹 자료를 연결하면 자동으로 들어가요.</p></section>
@@ -745,6 +754,22 @@ async function renderDaily() {
     if (isNum(el)) { el.onfocus = () => { el.value = el.value ? String(num(el.value)) : ''; el.select(); }; el.onblur = () => { el.value = num(el.value) ? comma(num(el.value)) : ''; }; }
   });
   document.getElementById('cMemo').oninput = (e) => { d.close.memo = e.target.value; dirty = true; };
+  document.getElementById('dwFile').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      if (dirty) await save(true);
+      const parsed = await parseDentweb(f);
+      const keys = Object.keys(parsed.days).sort();
+      if (!parsed.kind || !keys.length) return alert('덴트웹 진료일·수납일 기준 통계 파일이 아닌 것 같아요.');
+      const known = new Set(people.map((p) => p.name));
+      const unknown = [...parsed.names, ...parsed.doctors].filter((n) => n !== '(미입력)' && !known.has(n));
+      if (!confirm(`${parsed.kind === 'pay' ? '수납일 기준' : '진료일 기준'} 통계예요.\n${keys[0]} ~ ${keys[keys.length - 1]} (${keys.length}일)에 채울까요?` +
+        (unknown.length ? `\n\n⚠️ 직원 명부에 없는 이름: ${[...new Set(unknown)].join(', ')}\n(덴트웹 이름과 포털 이름이 같아야 팀·개인 성과에 잡혀요)` : ''))) return;
+      toast('올리는 중…');
+      await applyDentweb(parsed);
+      toast(`${keys.length}일치를 채웠어요`); go('daily', { date: keys.includes(date) ? date : keys[0] });
+    } catch (er) { console.error(er); alert('파일을 읽지 못했어요: ' + (er.message || er)); }
+  };
   const save = async (silent) => {
     const clean = { ...d, month };
     ['income', 'goods', 'expense'].forEach((k) => { clean[k] = d[k].filter((r) => Object.entries(r).some(([kk, v]) => v && !(kk === 'qty' && v === 1))); });
@@ -761,6 +786,62 @@ async function renderDaily() {
   document.getElementById('dNext').onclick = () => leave(shiftD(1));
   document.getElementById('cPrev').onclick = () => leave(`${ymd(new Date(y, m - 2, 1))}`);
   document.getElementById('cNext').onclick = () => leave(`${ymd(new Date(y, m, 1))}`);
+}
+
+
+// 덴트웹 통계 엑셀(진료일 기준 / 수납일 기준) → 날짜별 합계 (환자 개인 정보는 저장하지 않음)
+async function parseDentweb(file) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.read(await file.arrayBuffer());
+  const out = { kind: '', days: {}, names: new Set(), doctors: new Set() };
+  for (const n of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
+    const h = rows.findIndex((r) => r.includes('순번') && (r.includes('진료일') || r.includes('수납일')));
+    if (h < 0) continue;
+    const head = rows[h].map((x) => String(x).trim()); const c = (k) => head.indexOf(k);
+    const isPay = c('수납일') >= 0 && c('수납구분') >= 0;
+    const isFee = !isPay && c('총진료비') >= 0;
+    if (!isPay && !isFee) continue;
+    out.kind = isPay ? 'pay' : 'fee';
+    const dateOf = (v) => { if (typeof v === 'number') { const d = XLSX.SSF.parse_date_code(v); return `${d.y}-${pad(d.m)}-${pad(d.d)}`; } const m = String(v).match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/); return m ? `${m[1]}-${pad(m[2])}-${pad(m[3])}` : ''; };
+    const V = (r, k) => (c(k) >= 0 ? num(r[c(k)]) : 0);
+    const S = (r, k) => (c(k) >= 0 ? String(r[c(k)] ?? '').trim() : '');
+    for (const r of rows.slice(h + 1)) {
+      if (!/^\d+$/.test(String(r[c('순번')]).trim())) continue;
+      const day = dateOf(r[c(isPay ? '수납일' : '진료일')]); if (!day) continue;
+      const D = out.days[day] ||= isPay ? { card: 0, cash: 0, other: 0, receipt: 0, refund: 0, payCount: 0 }
+        : { fee: 0, claim: 0, copay: 0, nonpay: 0, discount: 0, unpaid: 0, feePaid: 0, charts: new Set(), newCharts: new Set(), routes: {}, byDoctor: {}, byStaff: {} };
+      if (isPay) {
+        D.card += V(r, '카드수납'); D.cash += V(r, '현금수납'); D.other += V(r, '기타(온라인)'); D.receipt += V(r, '현영발행액'); D.payCount++;
+        if (S(r, '수납구분') === '환불') D.refund += V(r, '총수납액');
+      } else {
+        const fee = V(r, '총진료비');
+        D.fee += fee; D.claim += V(r, '청구액'); D.copay += V(r, '본인부담금'); D.nonpay += V(r, '비급여'); D.discount += V(r, '할인액'); D.unpaid += V(r, '미수(+)선수(-)'); D.feePaid += V(r, '총수납액');
+        const chart = S(r, '차트번호'); if (chart) D.charts.add(chart);
+        if (chart && dateOf(r[c('최초내원')]) === day) { D.newCharts.add(chart); const route = S(r, '내원경로') || '(미입력)'; D.routes[route] = (D.routes[route] || 0) + 1; }
+        // 원장이 여러 명이면 진료비를 똑같이 나눠요 (덴트웹 파일에 항목별 원장이 없어서)
+        const docs = S(r, '진료의사').split(',').map((x) => x.trim()).filter(Boolean);
+        (docs.length ? docs : ['(미입력)']).forEach((d) => { D.byDoctor[d] = (D.byDoctor[d] || 0) + fee / (docs.length || 1); out.doctors.add(d); });
+        const staffs = S(r, '담당직원').split(',').map((x) => x.trim()).filter(Boolean);
+        (staffs.length ? staffs : ['(미입력)']).forEach((st) => { D.byStaff[st] = (D.byStaff[st] || 0) + fee / (staffs.length || 1); out.names.add(st); });
+      }
+    }
+    break;
+  }
+  Object.values(out.days).forEach((D) => {
+    if (D.charts) { D.patients = D.charts.size; D.newPatients = D.newCharts.size; delete D.charts; delete D.newCharts;
+      ['byDoctor', 'byStaff'].forEach((k) => Object.keys(D[k]).forEach((n) => { D[k][n] = Math.round(D[k][n]); })); }
+  });
+  return out;
+}
+async function applyDentweb(parsed) {
+  const keys = Object.keys(parsed.days).sort();
+  for (const day of keys) {
+    const ref = doc(db, 'daily', day); const snap = await getDoc(ref); const cur = snap.exists() ? snap.data() : {};
+    const dw = { ...(cur.dw || {}), ...parsed.days[day], [parsed.kind === 'pay' ? 'payAt' : 'feeAt']: today() };
+    await setDoc(ref, { ...cur, month: day.slice(0, 7), dw, updatedAt: serverTimestamp(), updatedBy: me.name });
+  }
+  return keys;
 }
 
 // ---------- 대시보드 ----------
@@ -787,7 +868,11 @@ async function renderDash() {
   const clinicPay = clinicTeams.reduce((s, t) => s + payOfTeam(t), 0);
   // 매출 합계
   const days = ds.docs.map((x) => ({ id: x.id, ...x.data() })).sort((a, b) => a.id.localeCompare(b.id));
-  const dmap = {}; days.forEach((x) => { dmap[x.id] = dailyTotals(x).total; });
+  // 매출(성과) = 덴트웹 진료일 기준 총진료비
+  const dmap = {}; days.forEach((x) => { dmap[x.id] = num(x.dw?.fee); });
+  const paid = days.reduce((s2, x) => s2 + num(x.dw?.card) + num(x.dw?.cash) + num(x.dw?.other), 0);
+  const patients = days.reduce((s2, x) => s2 + num(x.dw?.patients), 0), newPts = days.reduce((s2, x) => s2 + num(x.dw?.newPatients), 0);
+  const byDoctor = {}; days.forEach((x) => Object.entries(x.dw?.byDoctor || {}).forEach(([n, v]) => { byDoctor[n] = (byDoctor[n] || 0) + num(v); }));
   const byDay = Array.from({ length: new Date(y, m, 0).getDate() }, (_, i) => { const k = `${month}-${pad(i + 1)}`; return { d: k, v: dmap[k] || 0 }; });
   const total = byDay.reduce((s, x) => s + x.v, 0);
   const byStaff = {}; days.forEach((x) => Object.entries(x.dw?.byStaff || {}).forEach(([n, v]) => { byStaff[n] = (byStaff[n] || 0) + num(v); }));
@@ -806,7 +891,7 @@ async function renderDash() {
     return { t, i, tg, rev, a, over, amt, lm, mem };
   });
   const unitRes = (inc?.units || []).filter((u) => num(u.rate) > 0).map((u) => ({ name: u.name, amt: Math.max(0, totalOver) * num(u.rate) / 100, rate: u.rate }));
-  const docRes = doctors.map((p) => { const r = num(inc?.doctorRatios?.[p.uid]) || ratio, tg = monthly(p.uid) / (r / 100), rev = byStaff[p.name] || 0;
+  const docRes = doctors.map((p) => { const r = num(inc?.doctorRatios?.[p.uid]) || ratio, tg = monthly(p.uid) / (r / 100), rev = byDoctor[p.name] || 0;
     return { p, tg, rev, amt: Math.max(0, rev - tg) * num(inc?.doctorRates?.[p.uid]) / 100 }; });
   // 구강용품: 판매 마진 × 비율 → 판매한 어시스트에게
   const goodsBy = {};
@@ -824,8 +909,9 @@ async function renderDash() {
     ${!inc ? '<p class="reqNow">목표매출·인센티브 설정이 아직 없어요. 먼저 <b>목표매출·인센티브</b>에서 저장해 주세요.</p>' : ''}
     <div class="kpis dashK">
       <div class="kpi"><span>성과</span><b class="${total - totalAdj >= target ? 'accent' : ''}">${target ? (total - totalAdj >= target ? '목표 달성! ' : '') + pct(total - totalAdj, target) + '%' : '-'}</b></div>
-      <div class="kpi"><span>이번 달 매출</span><b>${W(total)}원</b></div>
-      <div class="kpi"><span>입력된 날</span><b>${days.length}일</b></div>
+      <div class="kpi"><span>총진료비</span><b>${W(total)}원</b></div>
+      <div class="kpi"><span>수납액</span><b>${W(paid)}원</b></div>
+      <div class="kpi"><span>내원 수 · 신환</span><b>${comma(patients)}명 · ${comma(newPts)}명</b></div>
       <div class="kpi"><span>인센티브 예상 총액</span><b>${W(incTotal)}원</b></div>
     </div>
 
@@ -855,10 +941,11 @@ async function renderDash() {
     </div>
 
     <div class="dashGrid two">
-      <div class="card"><h4>📊 일별 매출</h4>${days.length ? `<div class="bars">${byDay.map((x) => `<div class="bar1" title="${x.d} ${W(x.v)}원"><i style="height:${Math.round(x.v / maxDay * 100)}%"></i><small>${+x.d.slice(8)}</small></div>`).join('')}</div>` : '<p class="muted">일계표가 아직 없어요.</p>'}</div>
-      <div class="card"><h4>👤 개인 성과</h4><div class="tbl"><table class="mt incT"><tr><th>이름</th><th>팀</th><th class="r">매출</th></tr>
-        ${[...staff.filter((p) => clinicTeams.includes(teamOf(p))), ...doctors].map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(teamOf(p) || (p.role === 'doctor' ? '원장' : ''))}</td><td class="r">${W(byStaff[p.name] || 0)}</td></tr>`).join('')}</table></div>
-        <p class="muted sm">개인별 매출은 덴트웹 자료를 연결하면 자동으로 채워져요.</p></div>
+      <div class="card"><h4>📊 일별 총진료비</h4>${days.length ? `<div class="bars">${byDay.map((x) => `<div class="bar1" title="${x.d} ${W(x.v)}원"><i style="height:${Math.round(x.v / maxDay * 100)}%"></i><small>${+x.d.slice(8)}</small></div>`).join('')}</div>` : '<p class="muted">일계표가 아직 없어요.</p>'}</div>
+      <div class="card"><h4>👤 개인 성과 <small class="muted">총진료비 기준</small></h4><div class="tbl"><table class="mt incT"><tr><th>이름</th><th>구분</th><th class="r">총진료비</th></tr>
+        ${Object.entries(byDoctor).sort((a2, b2) => b2[1] - a2[1]).map(([n, v]) => `<tr><td>${esc(n)}</td><td>원장</td><td class="r">${W(v)}</td></tr>`).join('')}
+        ${Object.entries(byStaff).sort((a2, b2) => b2[1] - a2[1]).map(([n, v]) => { const p = staff.find((x) => x.name === n); return `<tr><td>${esc(n)}</td><td>${esc(p ? teamOf(p) || '직원' : n === '(미입력)' ? '담당직원 미입력' : '명부에 없음')}</td><td class="r">${W(v)}</td></tr>`; }).join('')}</table></div>
+        <p class="muted sm">덴트웹 진료일 기준 통계의 진료의사·담당직원으로 나눠요. 원장·직원이 여러 명이면 똑같이 나눠요.</p></div>
     </div>`);
   document.getElementById('mPrev').onclick = () => go('dash', { month: shift(-1) });
   document.getElementById('mNext').onclick = () => go('dash', { month: shift(1) });
