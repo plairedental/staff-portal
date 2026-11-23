@@ -213,7 +213,7 @@ function categories() {
    .map((c) => ({ ...c, items: f(c.items), admin: f(c.admin) }));
 }
 // 좌측 아래: 관리자 메뉴(카테고리마다 다름) → 맨 아래 내 계정
-const GLOBAL_ADMIN = () => [['settings', '화면 설정', '🎨', '글씨체, 색상, 로고를 바꿔요.', () => me.role === 'admin']].filter((i) => i[4]());
+const GLOBAL_ADMIN = () => [];   // 화면 설정은 오른쪽 위 ⚙️ 버튼으로 옮김 (관리자만)
 const MY_ITEMS = [
   ['my', '마이페이지', '👤', '내 기본정보, 연봉, 글씨 크기를 확인해요.'],
   ['security', '보안정책', '🛡️', '내 정보가 어떻게 보호되는지 확인해요.']
@@ -255,6 +255,7 @@ function shell(content) {
       <a href="#" id="home" class="homeLink">${brand('small')}</a>
       <nav class="cats">${cats.map((c) => `<button data-cat="${c.key}" class="${hit?.key === c.key ? 'on' : ''}"><i>${c.icon}</i>${c.label}</button>`).join('')}</nav>
       <div class="who">
+        ${me.role === 'admin' ? `<button id="setBtn" class="ghost sm ${key === 'settings' ? 'on' : ''}" title="화면 설정 (글씨체·색상·로고)">⚙️<span class="hideM"> 화면 설정</span></button>` : ''}
         <a href="#" id="me">${esc(me.name)} <small>${ROLES[me.role]}</small></a>
         <button id="out" class="ghost sm">로그아웃</button>
       </div>
@@ -275,6 +276,7 @@ function shell(content) {
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { const c = cats.find((x) => x.key === b.dataset.cat); goKey((c.items[0] || c.admin[0])[0]); });
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
+  document.getElementById('setBtn')?.addEventListener('click', () => go('settings'));
   if (cat.key === 'manual') bindManualSide();
   document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
   document.getElementById('me').onclick = (e) => { e.preventDefault(); go('my'); };
