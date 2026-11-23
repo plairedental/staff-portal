@@ -861,7 +861,11 @@ async function renderEduProg() {
     getDocs(mentor ? collection(db, 'eduStatus') : query(collection(db, 'eduStatus'), where('uid', '==', me.uid))),
     getDocs(query(collection(db, 'practice'), where('uid', '==', who))), mentor ? loadPeople() : Promise.resolve([])]);
   await loadManual();
-  const progs = ps.docs.map((d) => ({ id: d.id, type: '이론', ...d.data() })).sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || (a.title || '').localeCompare(b.title || '', 'ko'));
+  // 이론 교육은 매뉴얼 목차에서 바로 만들어요 (제목·순서·새 페이지·삭제가 자동 반영, 기록은 페이지에 붙어서 유지)
+  const gIdx = (g) => { const i = mcache.tree.groups.findIndex((x) => x.name === g); return i < 0 ? 99 : i; };
+  const theory = mPages().map((m) => ({ id: 'm_' + m.id, virtual: true, type: '이론', title: m.title, category: `이론 · ${m.group}`, manualId: m.id, desc: m.sub || '', order: 100000 + gIdx(m.group) * 1000 + (m.order ?? 999) }));
+  const progs = [...ps.docs.map((d) => ({ id: d.id, type: '이론', ...d.data() })).filter((p) => !(p.type === '이론' && p.manualId)), ...theory]
+    .sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || (a.title || '').localeCompare(b.title || '', 'ko'));
   const st = ss.docs.map((d) => ({ id: d.id, ...d.data() }));
   const recs = rs.docs.map((d) => d.data());
   const sOf = (pid) => st.find((x) => x.progId === pid && x.uid === who);
@@ -881,7 +885,7 @@ async function renderEduProg() {
         : s ? '' : mine ? `<button class="primary sm" data-req="${p.id}">신청하기</button>` : '-'}</td>
       <td class="nowrap">${s?.status === '수강 완료' ? `<b class="accent">✅ 이수</b><br><small class="muted">${esc(s.doneDate || '')} ${esc(s.doneBy || '')}</small>`
         : `${p.type === '실습' ? `<small>통과 ${pass}${p.target ? '/' + p.target : ''}회</small><br>` : ''}${mentor && !mine ? `<button class="sm" data-cert="${p.id}">이수 인정</button>` : mine && !s ? `<button class="ghost sm" data-ask="${p.id}">${p.type === '실습' ? '이수 확인 요청' : '들었어요'}</button>` : ''}`}</td>
-      <td class="nowrap">${p.type === '실습' ? `<button class="ghost sm" data-prac="${p.id}">📷 기록 ${r.length ? `(${r.length})` : ''}</button>` : ''} ${link}${admin ? ` <button class="ghost sm" data-pe="${p.id}">✏️</button>` : ''}</td></tr>`;
+      <td class="nowrap">${p.type === '실습' ? `<button class="ghost sm" data-prac="${p.id}">📷 기록 ${r.length ? `(${r.length})` : ''}</button>` : ''} ${link}${admin && !p.virtual ? ` <button class="ghost sm" data-pe="${p.id}">✏️</button>` : ''}</td></tr>`;
   };
   shell(`
     <div class="row between"><div><p class="eyebrow">TRAINING</p><h1>원내 교육 프로그램</h1></div>
@@ -894,8 +898,8 @@ async function renderEduProg() {
     ${who !== me.uid ? `<p class="reqNow">👀 <b>${esc(whoName)}</b>님의 교육 현황이에요.</p>` : ''}
     ${cats.map((c) => `<h3 class="dashH">${esc(c)}</h3><div class="card"><div class="tbl"><table class="mt incT progT"><tr><th>교육</th><th>구분</th><th>진행 단계</th><th>신청</th><th>이수</th><th></th></tr>
       ${progs.filter((p) => (p.category || '기타') === c).map(row).join('')}</table></div></div>`).join('') || '<section class="card muted">아직 등록된 교육이 없어요.</section>'}
-    ${admin ? `<section class="card"><h3>교육 목록 빠르게 만들기</h3><div class="row"><button id="seedPrac">🧪 추천 실습 ${PRESET_PROGS.length}개 넣기</button><button id="seedMan">📖 매뉴얼 목차로 이론 교육 만들기</button></div>
-      <p class="muted sm">이미 같은 이름이 있으면 건너뛰어요. 넣은 뒤 ✏️로 고치거나 지울 수 있어요.</p></section>` : ''}`);
+    ${admin ? `<section class="card"><h3>교육 목록 빠르게 만들기</h3><div class="row"><button id="seedPrac">🧪 추천 실습 ${PRESET_PROGS.length}개 넣기</button></div>
+      <p class="muted sm">이미 같은 이름이 있으면 건너뛰어요. 넣은 뒤 ✏️로 고치거나 지울 수 있어요. <b>이론 교육은 매뉴얼 목차를 따라 자동으로 만들어져요</b> — 매뉴얼을 고치면 여기에도 바로 반영돼요.</p></section>` : ''}`);
   const statusRef = (pid, uid) => doc(db, 'eduStatus', `${pid}__${uid}`);
   const setMine = (p, status) => setDoc(statusRef(p.id, me.uid), { progId: p.id, uid: me.uid, name: me.name, title: p.title, status, reqDate: today() });
   document.getElementById('who')?.addEventListener('change', (e) => go('eduprog', { who: e.target.value }));
@@ -949,13 +953,7 @@ async function renderEduProg() {
     }
     toast(`${n}개를 넣었어요`); go('eduprog');
   });
-  document.getElementById('seedMan')?.addEventListener('click', async () => {
-    const pages = mPages().sort(mSort).filter((m) => !have.has(m.title));
-    if (!confirm(`매뉴얼 ${pages.length}개 페이지로 이론 교육을 만들까요?`)) return;
-    let o = 0;
-    for (const m of pages) await addDoc(collection(db, 'eduPrograms'), { category: `이론 · ${m.group}`, title: m.title, type: '이론', manualId: m.id, order: o++, desc: m.sub || '' });
-    toast(`${pages.length}개를 만들었어요`); go('eduprog');
-  });
+
 }
 
 // 실습 기록 (사진·자가 체크·멘토 피드백, 치아별로 쌓임)
