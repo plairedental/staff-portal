@@ -282,7 +282,25 @@ function shell(content) {
   document.getElementById('me').onclick = (e) => { e.preventDefault(); go('my'); };
   document.getElementById('out').onclick = () => signOut(auth);
 }
-function go(v, s = null) { view = v; sub = s; render(); window.scrollTo(0, 0); }
+// 앱 안 이동을 브라우저 기록에 남겨서, 휴대폰·브라우저 '뒤로가기'로 이전 화면에 돌아가게 함
+let navDepth = 0;
+const navState = (v, s) => { try { return { v, s: JSON.parse(JSON.stringify(s ?? null)) }; } catch { return { v, s: null }; } };
+function go(v, s = null, fromPop = false) {
+  const st = navState(v, s);
+  if (!fromPop) {
+    const cur = history.state;
+    if (cur && cur.v === st.v && JSON.stringify(cur.s) === JSON.stringify(st.s)) history.replaceState(st, '');
+    else { history.pushState(st, ''); navDepth++; }
+  }
+  view = v; sub = s; render(); window.scrollTo(0, 0);
+}
+window.addEventListener('popstate', (e) => {
+  if (!me) return;
+  const st = e.state;
+  navDepth = Math.max(0, navDepth - 1);
+  if (st && st.v) go(st.v, st.s, true);
+  else go('home', null, true);
+});
 
 function renderHome() {
   const cats = [...categories().map((c) => ({ ...c, items: [...c.items, ...c.admin.map((i) => [i[0], '🔒 ' + i[1], i[2], i[3]])] })),
@@ -914,7 +932,7 @@ async function renderEduProg() {
   const statusRef = (pid, uid) => doc(db, 'eduStatus', `${pid}__${uid}`);
   const setMine = (p, status) => setDoc(statusRef(p.id, me.uid), { progId: p.id, uid: me.uid, name: me.name, title: p.title, status, reqDate: today() });
   document.getElementById('who')?.addEventListener('change', (e) => go('eduprog', { who: e.target.value }));
-  $app.querySelectorAll('[data-man]').forEach((a) => a.onclick = (e) => { e.preventDefault(); go('manual', { id: a.dataset.man }); });
+  $app.querySelectorAll('[data-man]').forEach((a) => a.onclick = (e) => { e.preventDefault(); go('manual', { id: a.dataset.man, back: '원내 교육 프로그램' }); });
   $app.querySelectorAll('[data-req]').forEach((b) => b.onclick = async () => { await setMine(progs.find((p) => p.id === b.dataset.req), '신청'); toast('신청했어요'); go('eduprog'); });
   $app.querySelectorAll('[data-ask]').forEach((b) => b.onclick = async () => { await setMine(progs.find((p) => p.id === b.dataset.ask), '확인 요청'); toast('멘토에게 이수 확인을 요청했어요'); go('eduprog'); });
   $app.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = async () => { await deleteDoc(doc(db, 'eduStatus', b.dataset.cancel)); go('eduprog'); });
@@ -2160,6 +2178,7 @@ async function renderManualPage(id) {
   }
   const crumb = special ? '원내매뉴얼' : `원내매뉴얼 / ${esc(p.group)}${p.sub ? ' / ' + esc(p.sub) : ''}`;
   shell(`
+    ${sub?.back ? `<button id="backBtn" class="ghost sm backBtn">← ${esc(sub.back)}(으)로 돌아가기</button>` : ''}
     <div class="crumb">${crumb}</div>
     <div class="row between mhead"><h1>${esc(p.title)}${p.code ? ` <small class="code">${esc(p.code)}</small>` : ''}</h1>
       ${can.editManual() ? '<button id="edit">✏️ 편집</button>' : ''}</div>
@@ -2167,6 +2186,7 @@ async function renderManualPage(id) {
     <article class="mdoc" id="mdoc">${cleanHtml(p.body)}</article>
     ${special ? '' : `<div class="row mfoot"><button id="note">📝 이 매뉴얼로 성찰노트 쓰기</button><button id="req" class="ghost">💬 개선 요청하기</button></div>
     <section class="card"><h3>🔄 이 페이지 업데이트 기록</h3><div id="plog" class="muted sm">불러오는 중…</div></section>`}`);
+  document.getElementById('backBtn')?.addEventListener('click', () => navDepth > 0 ? history.back() : go('eduprog'));
   const root = document.getElementById('mdoc');
   const n = bindChecks(root, id);
   if (n) { const pr = document.querySelector('.chkProg'); pr.textContent = ` · 체크 ${root.querySelectorAll('ul.check > li.on').length} / ${n} 완료`; root.classList.add('hasChk'); }
