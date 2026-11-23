@@ -792,18 +792,25 @@ async function renderEdu() {
         <label>시간(선택)<input id="eHours" inputmode="decimal" placeholder="예: 3"></label></div>
       <label>제목<input id="eTitle" placeholder="예: 임플란트 보철 어시스트 세미나"></label>
       <label>주최·강사 (선택)<input id="eOrg" placeholder="예: ○○학회, ○○ 원장님"></label>
-      <label>배운 점·적용할 점<textarea id="eLearn" rows="4"></textarea></label>
+      <label>배운 점·적용할 점 <small class="muted">(사진·글꼴·색·상자 등 매뉴얼처럼 꾸밀 수 있어요)</small></label>
+      ${editorToolbar()}<div class="mdoc editor eduEd" id="eLearn" contenteditable="true"><p></p></div>
       <button class="primary" id="eSave">저장</button></div></details>` : ''}
     ${Object.keys(years).sort().reverse().map((yy) => `<h3 class="dashH">${yy} <small class="muted">${years[yy].length}건 · ${hrs(years[yy])}시간</small></h3>
       <div class="timeline">${years[yy].map((it) => `<div class="tlItem ${it.type}"><div class="tlDot"></div><div class="card">
         <div class="row between"><div><b>${esc(it.title)}</b> <span class="stTag">${esc(it.place || '')}</span> <span class="stTag">${esc(it.kind || '')}</span>${who === 'all' ? ` <b class="sm">· ${esc(it.name)}</b>` : ''}</div>
           <span class="muted sm">${esc(it.date)}${it.hours ? ` · ${it.hours}시간` : ''}</span></div>
-        ${it.org ? `<p class="sm muted">${esc(it.org)}</p>` : ''}${it.learned ? `<p class="ntext">${esc(it.learned)}</p>` : ''}
+        ${it.org ? `<p class="sm muted">${esc(it.org)}</p>` : ''}${it.html ? `<div class="mdoc eduView">${cleanHtml(it.html)}</div>` : it.learned ? `<p class="ntext">${esc(it.learned)}</p>` : ''}
         ${it.type === 'log' && it.uid === me.uid ? `<button class="ghost sm" data-ldel="${it.id}">삭제</button>` : ''}</div></div>`).join('')}</div>`).join('') || '<section class="card muted">아직 기록이 없어요.</section>'}`);
+  const eduImgs = {};
+  if (document.getElementById('eLearn')) bindEditor(document.getElementById('eLearn'), eduImgs, 'eimg-');
+  $app.querySelectorAll('.eduView').forEach((v) => hydrateImages(v));
   document.getElementById('who')?.addEventListener('change', (e) => go('edu', { who: e.target.value }));
   document.getElementById('eSave')?.addEventListener('click', async () => {
     const title = val('eTitle'); if (!title) return toast('제목을 적어 주세요');
-    await addDoc(collection(db, 'eduLogs'), { uid: me.uid, name: me.name, date: val('eDate'), place: val('ePlace'), kind: val('eKind'), hours: num(val('eHours')), title, org: val('eOrg'), learned: document.getElementById('eLearn').value.trim(), at: serverTimestamp() });
+    const ed = document.getElementById('eLearn'); const html = bodyForSave(ed);
+    if (html.length > 900000) return alert('내용이 너무 커요. 사진 수를 줄여 주세요.');
+    await saveImages(eduImgs, html);
+    await addDoc(collection(db, 'eduLogs'), { uid: me.uid, name: me.name, date: val('eDate'), place: val('ePlace'), kind: val('eKind'), hours: num(val('eHours')), title, org: val('eOrg'), learned: ed.textContent.trim().slice(0, 300), html, at: serverTimestamp() });
     toast('기록했어요'); go('edu');
   });
   $app.querySelectorAll('[data-ldel]').forEach((b) => b.onclick = async () => { if (!confirm('이 기록을 지울까요?')) return; await deleteDoc(doc(db, 'eduLogs', b.dataset.ldel)); go('edu'); });
@@ -1850,7 +1857,7 @@ async function hydrateImages(root) {
   for (const img of root.querySelectorAll('img[data-img]')) {
     const id = img.dataset.img;
     if (!mimg[id]) {
-      try { const d = await getDoc(doc(db, 'manualImages', id)); if (d.exists()) mimg[id] = d.data().data; } catch (e) { /* 무시 */ }
+      try { const d = await getDoc(doc(db, id.startsWith('eimg-') ? 'eduImages' : 'manualImages', id)); if (d.exists()) mimg[id] = d.data().data; } catch (e) { /* 무시 */ }
     }
     if (mimg[id]) img.src = mimg[id];
   }
@@ -1959,7 +1966,7 @@ function compressImage(file) {
     img.src = URL.createObjectURL(file);
   });
 }
-function bindEditor(ed, newImgs) {
+function bindEditor(ed, newImgs, imgPrefix = 'img-') {
   document.execCommand('styleWithCSS', false, true);
   document.execCommand('defaultParagraphSeparator', false, 'p');
   let lastImg = null, range = null;
@@ -2023,7 +2030,7 @@ function bindEditor(ed, newImgs) {
     const f = e.target.files[0]; if (!f) return;
     toast('사진을 줄이는 중…');
     const data = await compressImage(f);
-    const id = 'img-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const id = imgPrefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     newImgs[id] = data; mimg[id] = data;
     insertHTML(`<figure><img data-img="${id}" src="${data}" alt="" style="width:55%"><figcaption>사진 설명</figcaption></figure><p><br></p>`);
     e.target.value = '';
@@ -2037,7 +2044,7 @@ function bodyForSave(ed) {
   return cleanHtml(c.innerHTML);
 }
 async function saveImages(newImgs, body) {
-  for (const [id, data] of Object.entries(newImgs)) if (body.includes(id)) await setDoc(doc(db, 'manualImages', id), { data, at: serverTimestamp() });
+  for (const [id, data] of Object.entries(newImgs)) if (body.includes(id)) await setDoc(doc(db, id.startsWith('eimg-') ? 'eduImages' : 'manualImages', id), { data, uid: me.uid, at: serverTimestamp() });
 }
 async function addMLog(e) {
   await addDoc(collection(db, 'manualLog'), { status: 'applied', by: me.name, at: serverTimestamp(), date: today(), ...e });

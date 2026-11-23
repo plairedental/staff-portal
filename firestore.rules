@@ -112,6 +112,12 @@ service cloud.firestore {
       allow create: if active() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
     }
+    // 자기계발 기록에 넣은 사진: 본인과 관리자·총괄실장
+    match /eduImages/{id} {
+      allow read: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
+      allow create: if active() && request.resource.data.uid == request.auth.uid;
+      allow delete: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
+    }
     // 원내 교육 프로그램: 모두 보기, 관리자·총괄실장 편집
     match /eduPrograms/{id} {
       allow read: if active();

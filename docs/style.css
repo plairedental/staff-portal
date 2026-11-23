@@ -724,3 +724,6 @@ table.statT td { text-align: right; }
 .tlItem .card { margin: 0; }
 .progT td { vertical-align: middle; }
 .schIn { width: auto !important; margin: 0; padding: .3rem; }
+.eduEd { min-height: 220px; max-width: none; }
+.eduView { max-width: none; padding: 1rem 1.2rem; margin-top: .6rem; }
+#wbox .etb { position: static; max-width: none; }
