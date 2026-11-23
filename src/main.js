@@ -182,6 +182,11 @@ function categories() {
       ['goods', '구강용품', '🪥', '구강용품 품목·가격·재고·매입·판매를 관리해요.', () => me.role === 'admin'],
       ['incentive', '목표매출·인센티브', '🎯', '인건비 비율로 목표 매출을 정하고 팀별 인센티브를 계산해요.', () => me.role === 'admin']
     ] },
+    { key: 'perf', label: '성과', icon: '🏅', items: [
+      ['perf', '성과 대시보드', '🏅', '이번 달 목표 대비 성과와 인센티브를 확인해요.'],
+      ['edu', '자기계발 기록', '📚', '내가 들은 강의·교육·세미나를 기록하고 발자취를 봐요.'],
+      ['eduprog', '원내 교육 프로그램', '🎓', '원내 교육 목록에서 수강 여부를 체크하고 신청해요.']
+    ], admin: [] },
     { key: 'hr', label: '인사관리', icon: '👥', items: [
       ['work:schedule', '근무표', '🗓️', '그날 쉬는 사람을 달력으로 확인해요.'],
       ['org', '조직도', '🏥', '부서·팀 구성과 담당 업무를 확인해요.'],
@@ -265,7 +270,7 @@ function shell(content) {
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
-      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'daily', 'goods'].includes(key) ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'daily', 'goods', 'perf', 'edu'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { const c = cats.find((x) => x.key === b.dataset.cat); goKey((c.items[0] || c.admin[0])[0]); });
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
@@ -297,6 +302,9 @@ async function render() {
     if (view === 'settings' && me.role === 'admin') return renderSettings();
     if (view === 'incentive' && me.role === 'admin') return await renderIncentive();
     if (view === 'dash' && me.role === 'admin') return await renderDash();
+    if (view === 'perf') return await renderPerfDash();
+    if (view === 'edu') return await renderEdu();
+    if (view === 'eduprog') return await renderEduProg();
     if (view === 'daily' && me.role === 'admin') return await renderDaily();
     if (view === 'goods' && me.role === 'admin') return await renderGoods();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
@@ -623,6 +631,232 @@ async function renderPerson(uid) {
   });
 }
 
+// ---------- 성과 (모든 직원) ----------
+// 관리자가 경영 대시보드/성과를 열 때 요약을 공개: perf/{월} (전체·원장·차트) · perfTeam/{월}__{팀} (그 팀만)
+async function publishPerf(month, D) {
+  const { target, total, totalAdj, totalOver, paid, patients, newPts, claimTotal, claimByDay, byDay, byDoctor, doctorPts, clinicTeams, teamCards, staff, byStaff, staffClaim, staffPts, days, adj, inc } = D;
+  const leaderClaim = staff.filter((p) => p.role === 'leader').reduce((s, p) => s + num(staffClaim[p.name]), 0);
+  const clinicMembers = staff.filter((p) => clinicTeams.includes((p.team || '').trim()));
+  await setDoc(doc(db, 'perf', month), {
+    month, target: Math.round(target), total, adjTotal: totalAdj, over: Math.round(totalOver), paid, patients, newPts, claimTotal,
+    claimLeader: leaderClaim, claimMember: clinicMembers.reduce((s, p) => s + num(staffClaim[p.name]), 0) - leaderClaim,
+    daily: byDay.map((x) => ({ d: x.d, fee: x.v, claim: num(claimByDay[x.d]) })),
+    doctors: Object.entries(byDoctor).filter(([n]) => n !== '(미입력)').map(([name, fee]) => ({ name, fee, pts: num(doctorPts[name]) })),
+    clinicTeams, staffCount: clinicMembers.length,
+    teams: teamCards.map((c) => ({ name: c.t, target: Math.round(c.tg), rev: c.rev })), updatedAt: serverTimestamp()
+  });
+  for (const c of teamCards) {
+    const mem = c.mem.map((p) => ({ name: p.name, role: p.role, fee: num(byStaff[p.name]), claim: num(staffClaim[p.name]), pts: num(staffPts[p.name]) }));
+    const dailyT = byDay.map((x) => { const dd = days.find((y) => y.id === x.d); const bs = dd?.dw?.byStaff || {}, sc = dd?.dw?.staffClaim || {};
+      return { d: x.d, fee: mem.reduce((s, p) => s + num(bs[p.name]), 0), claim: mem.reduce((s, p) => s + num(sc[p.name]), 0) }; });
+    await setDoc(doc(db, 'perfTeam', `${month}__${c.t}`), {
+      month, team: c.t, target: Math.round(c.tg), rev: c.rev, adj: adj[c.t] || {}, adjSum: c.a, over: Math.round(c.over), incentive: Math.round(c.amt),
+      leaderMax: c.lm, rate: num(inc?.clinicRate), members: mem, daily: dailyT, updatedAt: serverTimestamp()
+    });
+  }
+}
+
+const W0 = (n) => comma(Math.round(num(n)));
+const pctOf = (a, b) => b ? Math.round(a / b * 1000) / 10 : 0;
+const ringH = (p, label = '') => `<div class="ring" style="--p:${Math.max(0, Math.min(100, p))}"><span>${p}%</span></div>${label ? `<p class="center sm muted">${label}</p>` : ''}`;
+const dlH = (rows) => `<dl>${rows.map(([k, v, cls = '']) => `<dt>${k}</dt><dd class="${cls}">${v}</dd>`).join('')}</dl>`;
+const overCls = (v) => v >= 0 ? 'accent' : 'neg';
+const sign = (v) => (v >= 0 ? '+' : '') + W0(v);
+function barsH(daily, key2) {
+  const max = Math.max(1, ...daily.map((x) => num(x.fee)));
+  return `<div class="bars">${daily.map((x) => `<div class="bar1" title="${x.d} 총진료비 ${W0(x.fee)}${key2 ? ' · 청구액 ' + W0(x[key2]) : ''}"><i style="height:${Math.round(num(x.fee) / max * 100)}%">${key2 ? `<em style="height:${num(x.fee) ? Math.round(num(x[key2]) / num(x.fee) * 100) : 0}%"></em>` : ''}</i><small>${+x.d.slice(8)}</small></div>`).join('')}</div>
+    ${key2 ? '<p class="sm muted"><span class="lg a"></span> 총진료비 <span class="lg b"></span> 청구액(총진료비에 포함)</p>' : ''}`;
+}
+function memberTable(mem) {
+  return `<div class="tbl"><table class="mt incT"><tr><th>이름</th><th class="r">총매출</th><th class="r">청구액</th><th class="r">환자수</th><th class="r">객단가</th></tr>
+    ${[...mem].sort((a, b) => b.fee - a.fee).map((p) => `<tr><td>${esc(p.name)}${p.role === 'leader' ? ' <small class="tag">팀장</small>' : ''}${p.team ? ` <small class="muted">${esc(p.team)}</small>` : ''}</td><td class="r accent">${W0(p.fee)}</td><td class="r">${W0(p.claim)}</td><td class="r">${comma(Math.round(p.pts))}</td><td class="r">${p.pts ? W0(p.fee / p.pts) : 0}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">자료가 없어요.</td></tr>'}</table></div>`;
+}
+function doctorCards(doctors) {
+  return doctors.map((d) => `<div class="card dCard"><h4><span class="tnum">${esc(d.name.slice(0, 1))}</span>${esc(d.name)}</h4>${dlH([['당월 매출', W0(d.fee), 'accent'], ['객단가', d.pts ? W0(d.fee / d.pts) : '-'], ['환자 수', d.pts ? comma(Math.round(d.pts)) : '-']])}</div>`).join('') || '<p class="muted">자료가 없어요.</p>';
+}
+
+async function renderPerfDash() {
+  const now = new Date();
+  const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const [y, m] = month.split('-').map(Number);
+  const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  if (me.role === 'admin') { try { await publishPerf(month, await dashData(month)); } catch (e) { console.error(e); } }
+  const ps = await getDoc(doc(db, 'perf', month));
+  const P = ps.exists() ? ps.data() : null;
+  const full = ['admin', 'chief'].includes(me.role);
+  const myTeam = (me.team || '').trim();
+  const isTeam = !full && P && (P.clinicTeams || []).includes(myTeam);
+  let teams = [];
+  if (P && full) teams = (await getDocs(query(collection(db, 'perfTeam'), where('month', '==', month)))).docs.map((d) => d.data());
+  else if (isTeam) { const t = await getDoc(doc(db, 'perfTeam', `${month}__${myTeam}`)); if (t.exists()) teams = [t.data()]; }
+  teams.sort((a, b) => (P.clinicTeams || []).indexOf(a.team) - (P.clinicTeams || []).indexOf(b.team));
+  const head = `<div class="row between"><div><p class="eyebrow">PERFORMANCE</p><h1>성과 대시보드${isTeam ? ` <small class="muted">${esc(myTeam)}</small>` : ''}</h1></div>
+    <div class="row"><button class="ghost" id="mPrev">◀</button><b class="monthLbl">${y}년 ${m}월</b><button class="ghost" id="mNext">▶</button></div></div>`;
+  if (!P) {
+    shell(head + `<section class="card"><p class="muted">이 달 성과 자료가 아직 없어요.${me.role === 'admin' ? ' 경영·통계에서 목표매출·인센티브를 저장하고 일계표에 덴트웹 자료를 올려 주세요.' : ''}</p></section>`);
+  } else if (full) {
+    const tAll = { rev: P.total, pts: P.patients };
+    const incAll = teams.reduce((s, t) => s + num(t.incentive), 0);
+    const allMembers = teams.flatMap((t) => (t.members || []).map((p) => ({ ...p, team: t.team })));
+    shell(head + `
+      <div class="kpis dashK">
+        <div class="kpi"><span>성과</span><b class="${P.over >= 0 ? 'accent' : ''}">${P.over >= 0 ? `목표 달성! ${pctOf(P.total - P.adjTotal, P.target)}%` : `목표까지 ${W0(-P.over / 10000)}만원`}</b></div>
+        <div class="kpi"><span>내원 수 · 신환</span><b>${comma(P.patients)}명 · ${comma(P.newPts)}명</b></div>
+        <div class="kpi"><span>환자 객단가</span><b>${P.patients ? W0(P.total / P.patients / 10000) + '만원' : '-'}</b></div>
+        <div class="kpi"><span>1인당 매출 <small class="muted">(진료팀)</small></span><b>${P.staffCount ? W0(P.total / P.staffCount / 10000) + '만원' : '-'}</b></div></div>
+      <h3 class="dashH">목표 대비 성과</h3><div class="dashGrid">
+        <div class="card dCard"><h4>📈 전체 성과</h4>${ringH(pctOf(tAll.rev - P.adjTotal, P.target))}${dlH([['목표매출', W0(P.target)], ['달성매출', W0(P.total), 'accent'], ['차감매출', W0(P.adjTotal)], ['초과매출', sign(P.over), overCls(P.over)]])}</div>
+        ${teams.map((t, i) => `<div class="card dCard"><h4><span class="tnum">${i + 1}</span>${esc(t.team)}</h4>${ringH(pctOf(t.rev - t.adjSum, t.target))}${dlH([['목표매출', W0(t.target)], ['달성매출', W0(t.rev), 'accent'], ['차감매출', W0(t.adjSum)], ['초과매출', sign(t.over), overCls(t.over)]])}</div>`).join('')}</div>
+      <h3 class="dashH">인센티브</h3><div class="dashGrid">
+        <div class="card dCard"><h4>🏆 진료팀 전체</h4>${dlH([['합계', W0(incAll), 'accent'], ...teams.map((t) => [esc(t.team), W0(t.incentive)])])}</div>
+        ${teams.map((t, i) => `<div class="card dCard"><h4><span class="tnum">${i + 1}</span>${esc(t.team)}</h4>${dlH([['합계', W0(t.incentive), 'accent'], [`팀장 최대 (${t.leaderMax}%)`, W0(t.incentive * t.leaderMax / 100)], ['팀원 최소', W0(t.incentive * (100 - t.leaderMax) / 100)]])}</div>`).join('')}</div>
+      <h3 class="dashH">보험청구</h3><div class="dashGrid">
+        <div class="card dCard"><h4>🧾 전체</h4>${dlH([['합계', W0(P.claimTotal), 'accent'], ['팀장', W0(P.claimLeader)], ['팀원', W0(P.claimMember)]])}</div>
+        ${teams.map((t, i) => { const sum = (t.members || []).reduce((s, p) => s + p.claim, 0); return `<div class="card dCard"><h4><span class="tnum">${i + 1}</span>${esc(t.team)}</h4>${dlH([['합계', W0(sum)], ...(t.members || []).map((p) => [`${esc(p.name)} <small class="muted">(${p.role === 'leader' ? '팀장' : '팀원'}) ${Math.round(pctOf(p.claim, sum))}%</small>`, W0(p.claim), 'accent'])])}</div>`; }).join('')}</div>
+      <h3 class="dashH">차감매출</h3><div class="dashGrid">
+        ${teams.map((t, i) => `<div class="card dCard"><h4><span class="tnum">${i + 1}</span>${esc(t.team)}</h4>${dlH([['합계', W0(t.adjSum), 'neg'], ['보험 조정', W0(t.adj?.ins)], ['전월 미달성', W0(t.adj?.prev)], ['타팀 지원 차감', W0(t.adj?.help)]])}</div>`).join('') || '<p class="muted">자료가 없어요.</p>'}</div>
+      <div class="dashGrid two"><div class="card"><h4>📊 매출 차트</h4>${barsH(P.daily || [], 'claim')}</div><div class="card"><h4>👤 개인 성과</h4>${memberTable(allMembers)}</div></div>
+      <h3 class="dashH">원장별 매출 현황</h3><div class="dashGrid">${doctorCards(P.doctors || [])}</div>
+      ${me.role === 'admin' ? '' : '<p class="muted sm">자료는 관리자가 경영·통계 화면을 열 때 갱신돼요.</p>'}`);
+  } else if (isTeam && teams[0]) {
+    const t = teams[0], mem = t.members || [];
+    const pts = mem.reduce((s, p) => s + p.pts, 0), claim = mem.reduce((s, p) => s + p.claim, 0);
+    const leader = mem.find((p) => p.role === 'leader');
+    const dsel = sub?.day || (t.daily || []).filter((x) => x.fee).map((x) => x.d).pop() || `${month}-01`;
+    const dd = (t.daily || []).find((x) => x.d === dsel) || { fee: 0, claim: 0 };
+    shell(head + `
+      <div class="kpis dashK">
+        <div class="kpi"><span>성과</span><b class="${t.over >= 0 ? 'accent' : ''}">${t.over >= 0 ? `목표 달성! ${pctOf(t.rev - t.adjSum, t.target)}%` : `목표까지 ${W0(-t.over / 10000)}만원`}</b></div>
+        <div class="kpi"><span>환자 수</span><b>${comma(Math.round(pts))}명</b></div>
+        <div class="kpi"><span>환자 객단가</span><b>${pts ? W0(t.rev / pts / 10000) + '만원' : '-'}</b></div>
+        <div class="kpi"><span>1인당 매출</span><b>${mem.length ? W0(t.rev / mem.length / 10000) + '만원' : '-'}</b></div></div>
+      <div class="dashGrid four">
+        <div class="card dCard"><h4>📈 이번달 매출</h4>${dlH([['목표매출', W0(t.target)], ['달성매출', W0(t.rev), 'accent'], ['차감매출', W0(t.adjSum)], ['초과매출', sign(t.over), overCls(t.over)]])}</div>
+        <div class="card dCard"><h4>🏆 인센티브</h4>${dlH([['합계', W0(t.incentive), 'accent'], [`팀장${leader ? ' ' + esc(leader.name) : ''} 최대 (${t.leaderMax}%)`, W0(t.incentive * t.leaderMax / 100)], ['팀원 몫 (최소)', W0(t.incentive * (100 - t.leaderMax) / 100)]])}<p class="muted sm">팀원 배분은 팀장이 정해요.</p></div>
+        <div class="card dCard"><h4>🧾 매출 내역</h4>${dlH([['총매출', W0(t.rev), 'accent'], ['보험청구액 (포함)', W0(claim)], ['본인부담·비급여', W0(t.rev - claim)]])}</div>
+        <div class="card dCard"><h4>📉 매출 차감액</h4>${dlH([['차감 합계', W0(t.adjSum), 'neg'], ['보험 조정', W0(t.adj?.ins)], ['전월 미달성', W0(t.adj?.prev)], ['타팀 지원 차감', W0(t.adj?.help)]])}</div></div>
+      <div class="dashGrid two">
+        <div class="card"><h4>📊 매출 차트</h4>${barsH(t.daily || [], 'claim')}
+          <div class="row ringRow"><div>${ringH(pctOf(t.rev - t.adjSum, t.target), '팀매출 도달률')}</div><div>${ringH(pctOf(P.total - P.adjTotal, P.target), '전체 매출 도달률')}</div></div></div>
+        <div class="card"><h4>👤 개인 성과</h4>${memberTable(mem)}</div></div>
+      <h3 class="dashH">일별 성과 <input type="date" id="dayPick" value="${dsel}" min="${month}-01" max="${month}-${pad(new Date(y, m, 0).getDate())}" class="inlineDate"></h3>
+      <div class="kpis"><div class="kpi"><span>총 매출</span><b>${W0(dd.fee)}</b></div><div class="kpi"><span>보험 청구</span><b>${W0(dd.claim)}</b></div><div class="kpi"><span>본인부담·비급여</span><b>${W0(dd.fee - dd.claim)}</b></div></div>`);
+    document.getElementById('dayPick').onchange = (e) => go('perf', { month, day: e.target.value });
+  } else {
+    // 진료 보조 역할(고객지원팀·진료지원팀 등)과 원장: 전체 성과, 보험청구, 매출 차트, 원장별 매출
+    shell(head + `
+      <div class="kpis dashK">
+        <div class="kpi"><span>전체 성과</span><b class="${P.over >= 0 ? 'accent' : ''}">${pctOf(P.total - P.adjTotal, P.target)}%</b></div>
+        <div class="kpi"><span>내원 수</span><b>${comma(P.patients)}명</b></div>
+        <div class="kpi"><span>신환</span><b>${comma(P.newPts)}명</b></div></div>
+      <div class="dashGrid">
+        <div class="card dCard"><h4>📈 전체 성과</h4>${ringH(pctOf(P.total - P.adjTotal, P.target))}${dlH([['목표매출', W0(P.target)], ['달성매출', W0(P.total), 'accent'], ['차감매출', W0(P.adjTotal)], ['초과매출', sign(P.over), overCls(P.over)]])}</div>
+        <div class="card dCard"><h4>🧾 보험청구</h4>${dlH([['합계', W0(P.claimTotal), 'accent'], ['총진료비 중 비율', pctOf(P.claimTotal, P.total) + '%']])}</div></div>
+      <div class="card" style="margin-top:1rem"><h4>📊 매출 차트</h4>${barsH(P.daily || [], 'claim')}</div>
+      <h3 class="dashH">원장별 매출 현황</h3><div class="dashGrid">${doctorCards(P.doctors || [])}</div>`);
+  }
+  document.getElementById('mPrev').onclick = () => go('perf', { month: shift(-1) });
+  document.getElementById('mNext').onclick = () => go('perf', { month: shift(1) });
+}
+
+// ---------- 자기계발 기록 · 원내 교육 프로그램 ----------
+// eduLogs/{id}: {uid, name, date, place:'원내'|'원외', kind, title, org, hours, learned}
+// eduPrograms/{id}: {order, category, title, desc, hours}
+// eduStatus/{progId}__{uid}: {progId, uid, name, title, status:'신청'|'일정 확정'|'수강 완료', schedule, reqDate, doneDate}
+const EDU_KINDS = ['강의', '교육', '세미나', '학회', '온라인 강의', '실습', '독서', '기타'];
+const isBoss = () => ['admin', 'chief'].includes(me.role);
+
+async function renderEdu() {
+  const who = isBoss() && sub?.who ? sub.who : me.uid;
+  const [ls, ss, people] = await Promise.all([
+    getDocs(isBoss() && who === 'all' ? collection(db, 'eduLogs') : query(collection(db, 'eduLogs'), where('uid', '==', who))),
+    getDocs(isBoss() && who === 'all' ? collection(db, 'eduStatus') : query(collection(db, 'eduStatus'), where('uid', '==', who))),
+    isBoss() ? loadPeople() : Promise.resolve([])]);
+  const logs = ls.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const done = ss.docs.map((d) => d.data()).filter((x) => x.status === '수강 완료');
+  const items = [...logs.map((l) => ({ ...l, type: 'log' })), ...done.map((x) => ({ type: 'prog', date: x.doneDate || '', title: x.title, place: '원내', kind: '원내 교육 프로그램', name: x.name, uid: x.uid }))]
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const years = {}; items.forEach((it) => { const yy = (it.date || '').slice(0, 4) || '날짜 없음'; (years[yy] ||= []).push(it); });
+  const hrs = (arr) => arr.reduce((s, x) => s + num(x.hours), 0);
+  const mine = who === me.uid;
+  const staffList = people.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
+  shell(`
+    <div class="row between"><div><p class="eyebrow">GROWTH</p><h1>자기계발 기록</h1></div>
+      ${isBoss() ? `<select id="who" style="width:auto"><option value="${me.uid}" ${who === me.uid ? 'selected' : ''}>내 기록</option><option value="all" ${who === 'all' ? 'selected' : ''}>직원 전체</option>${staffList.filter((p) => p.uid !== me.uid).map((p) => `<option value="${p.uid}" ${who === p.uid ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : ''}</div>
+    <p class="muted">원내·원외에서 들은 강의, 교육, 세미나를 기록해요. 쌓인 기록이 나의 발자취가 돼요. 기록은 본인과 관리자·총괄실장만 볼 수 있어요.</p>
+    <div class="kpis"><div class="kpi"><span>전체 기록</span><b>${items.length}건</b></div><div class="kpi"><span>올해</span><b>${(years[String(new Date().getFullYear())] || []).length}건 · ${hrs(years[String(new Date().getFullYear())] || [])}시간</b></div><div class="kpi"><span>원내 교육 수강</span><b>${done.length}건</b></div></div>
+    ${mine ? `<details class="card" id="wbox"><summary class="primaryLink">✍️ 새 기록 쓰기</summary><div class="form">
+      <div class="row wrapRow"><label>날짜<input type="date" id="eDate" value="${today()}"></label>
+        <label>구분<select id="ePlace"><option>원외</option><option>원내</option></select></label>
+        <label>종류<select id="eKind">${EDU_KINDS.map((k) => `<option>${k}</option>`).join('')}</select></label>
+        <label>시간(선택)<input id="eHours" inputmode="decimal" placeholder="예: 3"></label></div>
+      <label>제목<input id="eTitle" placeholder="예: 임플란트 보철 어시스트 세미나"></label>
+      <label>주최·강사 (선택)<input id="eOrg" placeholder="예: ○○학회, ○○ 원장님"></label>
+      <label>배운 점·적용할 점<textarea id="eLearn" rows="4"></textarea></label>
+      <button class="primary" id="eSave">저장</button></div></details>` : ''}
+    ${Object.keys(years).sort().reverse().map((yy) => `<h3 class="dashH">${yy} <small class="muted">${years[yy].length}건 · ${hrs(years[yy])}시간</small></h3>
+      <div class="timeline">${years[yy].map((it) => `<div class="tlItem ${it.type}"><div class="tlDot"></div><div class="card">
+        <div class="row between"><div><b>${esc(it.title)}</b> <span class="stTag">${esc(it.place || '')}</span> <span class="stTag">${esc(it.kind || '')}</span>${who === 'all' ? ` <b class="sm">· ${esc(it.name)}</b>` : ''}</div>
+          <span class="muted sm">${esc(it.date)}${it.hours ? ` · ${it.hours}시간` : ''}</span></div>
+        ${it.org ? `<p class="sm muted">${esc(it.org)}</p>` : ''}${it.learned ? `<p class="ntext">${esc(it.learned)}</p>` : ''}
+        ${it.type === 'log' && it.uid === me.uid ? `<button class="ghost sm" data-ldel="${it.id}">삭제</button>` : ''}</div></div>`).join('')}</div>`).join('') || '<section class="card muted">아직 기록이 없어요.</section>'}`);
+  document.getElementById('who')?.addEventListener('change', (e) => go('edu', { who: e.target.value }));
+  document.getElementById('eSave')?.addEventListener('click', async () => {
+    const title = val('eTitle'); if (!title) return toast('제목을 적어 주세요');
+    await addDoc(collection(db, 'eduLogs'), { uid: me.uid, name: me.name, date: val('eDate'), place: val('ePlace'), kind: val('eKind'), hours: num(val('eHours')), title, org: val('eOrg'), learned: document.getElementById('eLearn').value.trim(), at: serverTimestamp() });
+    toast('기록했어요'); go('edu');
+  });
+  $app.querySelectorAll('[data-ldel]').forEach((b) => b.onclick = async () => { if (!confirm('이 기록을 지울까요?')) return; await deleteDoc(doc(db, 'eduLogs', b.dataset.ldel)); go('edu'); });
+}
+
+async function renderEduProg() {
+  const boss = isBoss();
+  const [ps, ss] = await Promise.all([getDocs(collection(db, 'eduPrograms')), getDocs(boss ? collection(db, 'eduStatus') : query(collection(db, 'eduStatus'), where('uid', '==', me.uid)))]);
+  const progs = ps.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || (a.title || '').localeCompare(b.title || '', 'ko'));
+  const st = ss.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const my = (pid) => st.find((x) => x.progId === pid && x.uid === me.uid);
+  const cats = [...new Set(progs.map((p) => p.category || '기타'))];
+  const reqs = st.filter((x) => x.status !== '수강 완료');
+  const stCls = { '신청': 'st-ing', '일정 확정': 'st-ing', '수강 완료': 'st-ok' };
+  shell(`
+    <div class="row between"><div><p class="eyebrow">TRAINING</p><h1>원내 교육 프로그램</h1></div>${boss ? '<button class="primary" id="pAdd">+ 교육 추가</button>' : ''}</div>
+    <p class="muted">들은 교육은 <b>수강 완료</b>로, 아직 못 들은 교육은 <b>신청하기</b>를 눌러 주세요. 관리자·총괄실장이 일정을 잡아 드려요.</p>
+    ${boss ? `<section class="card reqBox"><h3>📨 신청·진행 중 ${reqs.length}건</h3>
+      ${reqs.map((x) => `<div class="reqRow"><div><b>${esc(x.name)}</b> · ${esc(x.title)} <span class="stTag ${stCls[x.status]}">${esc(x.status)}</span><br><span class="muted sm">${esc(x.reqDate || '')} 신청${x.schedule ? ` · 일정 ${esc(x.schedule)}` : ''}</span></div>
+        <div class="row"><input type="date" class="schIn" data-s="${x.id}" value="${esc(x.schedule || '')}" title="교육 일정"><button class="sm" data-sch="${x.id}">일정 저장</button><button class="primary sm" data-done="${x.id}">✅ 수강 완료</button></div></div>`).join('') || '<p class="muted">신청한 사람이 없어요.</p>'}</section>` : ''}
+    ${cats.map((c) => `<h3 class="dashH">${esc(c)}</h3><div class="card"><div class="tbl"><table class="mt incT progT"><tr><th>교육</th><th>내용</th>${boss ? '<th>수강 완료</th><th></th>' : '<th>내 상태</th>'}</tr>
+      ${progs.filter((p) => (p.category || '기타') === c).map((p) => { const s = my(p.id); const doneN = st.filter((x) => x.progId === p.id && x.status === '수강 완료');
+        return `<tr><td><b>${esc(p.title)}</b>${p.hours ? `<br><small class="muted">${p.hours}시간</small>` : ''}</td><td class="sm">${esc(p.desc || '')}</td>
+        ${boss ? `<td class="sm">${doneN.map((x) => esc(x.name)).join(', ') || '-'}</td><td class="nowrap"><button class="ghost sm" data-pe="${p.id}">✏️</button></td>`
+          : `<td class="nowrap">${s ? `<span class="stTag ${stCls[s.status]}">${esc(s.status)}</span>${s.schedule && s.status !== '수강 완료' ? `<br><small>일정 ${esc(s.schedule)}</small>` : ''}${s.status === '신청' ? ` <button class="ghost sm" data-cancel="${s.id}">취소</button>` : ''}`
+            : `<button class="primary sm" data-req="${p.id}">신청하기</button> <button class="ghost sm" data-self="${p.id}">들었어요</button>`}</td>`}</tr>`; }).join('')}</table></div></div>`).join('') || '<section class="card muted">아직 등록된 교육이 없어요.</section>'}`);
+  const setSt = (p, status) => setDoc(doc(db, 'eduStatus', `${p.id}__${me.uid}`), { progId: p.id, uid: me.uid, name: me.name, title: p.title, status, reqDate: today(), ...(status === '수강 완료' ? { doneDate: today() } : {}) });
+  $app.querySelectorAll('[data-req]').forEach((b) => b.onclick = async () => { await setSt(progs.find((p) => p.id === b.dataset.req), '신청'); toast('신청했어요'); go('eduprog'); });
+  $app.querySelectorAll('[data-self]').forEach((b) => b.onclick = async () => { await setSt(progs.find((p) => p.id === b.dataset.self), '수강 완료'); toast('수강 완료로 기록했어요'); go('eduprog'); });
+  $app.querySelectorAll('[data-cancel]').forEach((b) => b.onclick = async () => { await deleteDoc(doc(db, 'eduStatus', b.dataset.cancel)); go('eduprog'); });
+  $app.querySelectorAll('[data-sch]').forEach((b) => b.onclick = async () => { const v = $app.querySelector(`.schIn[data-s="${b.dataset.sch}"]`).value; await updateDoc(doc(db, 'eduStatus', b.dataset.sch), { schedule: v, status: v ? '일정 확정' : '신청' }); toast('일정을 저장했어요'); go('eduprog'); });
+  $app.querySelectorAll('[data-done]').forEach((b) => b.onclick = async () => { await updateDoc(doc(db, 'eduStatus', b.dataset.done), { status: '수강 완료', doneDate: today(), doneBy: me.name }); toast('수강 완료로 처리했어요'); go('eduprog'); });
+  const edit = (p) => {
+    const w = document.createElement('div'); w.className = 'modal';
+    w.innerHTML = `<div class="modalBox form"><h2>${p ? '교육 수정' : '교육 추가'}</h2>
+      <label>분류<input id="qCat" list="qCats" value="${esc(p?.category || '')}" placeholder="예: 신입 필수, 어시스트, 상담"><datalist id="qCats">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
+      <label>교육 이름<input id="qTitle" value="${esc(p?.title || '')}"></label><label>내용<textarea id="qDesc" rows="3">${esc(p?.desc || '')}</textarea></label>
+      <div class="two"><label>시간<input id="qHours" inputmode="decimal" value="${p?.hours || ''}"></label><label>순서<input id="qOrder" inputmode="numeric" value="${p?.order ?? progs.length + 1}"></label></div>
+      <div class="row"><button class="primary" id="qSave">저장</button><button class="ghost" id="qX">취소</button>${p ? '<button class="ghost danger" id="qDel">삭제</button>' : ''}</div></div>`;
+    document.body.appendChild(w);
+    document.getElementById('qX').onclick = () => w.remove();
+    document.getElementById('qSave').onclick = async () => {
+      const data = { category: val('qCat') || '기타', title: val('qTitle'), desc: document.getElementById('qDesc').value.trim(), hours: num(val('qHours')), order: num(val('qOrder')) };
+      if (!data.title) return toast('교육 이름을 적어 주세요');
+      if (p) await setDoc(doc(db, 'eduPrograms', p.id), data); else await addDoc(collection(db, 'eduPrograms'), data);
+      w.remove(); go('eduprog');
+    };
+    document.getElementById('qDel')?.addEventListener('click', async () => { if (!confirm('이 교육을 지울까요?')) return; await deleteDoc(doc(db, 'eduPrograms', p.id)); w.remove(); go('eduprog'); });
+  };
+  document.getElementById('pAdd')?.addEventListener('click', () => edit(null));
+  $app.querySelectorAll('[data-pe]').forEach((b) => b.onclick = () => edit(progs.find((p) => p.id === b.dataset.pe)));
+}
+
 // ---------- 일계표 · 대시보드 (관리자·총괄실장) ----------
 // daily/{YYYY-MM-DD}: { month, income:[], goods:[], expense:[], close:{prevCash,toDoc,memo}, dw:{card,cash,other,receipt,byStaff:{},byDoctor:{},patients} }
 const PAYWAYS = ['현금', '카드', '계좌이체'];
@@ -810,7 +1044,7 @@ async function parseDentweb(file) {
       if (!/^\d+$/.test(String(r[c('순번')]).trim())) continue;
       const day = dateOf(r[c(isPay ? '수납일' : '진료일')]); if (!day) continue;
       const D = out.days[day] ||= isPay ? { card: 0, cash: 0, other: 0, receipt: 0, refund: 0, payCount: 0 }
-        : { fee: 0, claim: 0, copay: 0, nonpay: 0, discount: 0, unpaid: 0, feePaid: 0, charts: new Set(), newCharts: new Set(), routes: {}, byDoctor: {}, byStaff: {} };
+        : { fee: 0, claim: 0, copay: 0, nonpay: 0, discount: 0, unpaid: 0, feePaid: 0, charts: new Set(), newCharts: new Set(), routes: {}, byDoctor: {}, byStaff: {}, staffClaim: {}, staffPts: {}, doctorPts: {} };
       if (isPay) {
         D.card += V(r, '카드수납'); D.cash += V(r, '현금수납'); D.other += V(r, '기타(온라인)'); D.receipt += V(r, '현영발행액'); D.payCount++;
         if (S(r, '수납구분') === '환불') D.refund += V(r, '총수납액');
@@ -821,16 +1055,18 @@ async function parseDentweb(file) {
         if (chart && dateOf(r[c('최초내원')]) === day) { D.newCharts.add(chart); const route = S(r, '내원경로') || '(미입력)'; D.routes[route] = (D.routes[route] || 0) + 1; }
         // 원장이 여러 명이면 진료비를 똑같이 나눠요 (덴트웹 파일에 항목별 원장이 없어서)
         const docs = S(r, '진료의사').split(',').map((x) => x.trim()).filter(Boolean);
-        (docs.length ? docs : ['(미입력)']).forEach((d) => { D.byDoctor[d] = (D.byDoctor[d] || 0) + fee / (docs.length || 1); out.doctors.add(d); });
+        (docs.length ? docs : ['(미입력)']).forEach((d) => { D.byDoctor[d] = (D.byDoctor[d] || 0) + fee / (docs.length || 1); D.doctorPts[d] = (D.doctorPts[d] || 0) + 1 / (docs.length || 1); out.doctors.add(d); });
         const staffs = S(r, '담당직원').split(',').map((x) => x.trim()).filter(Boolean);
-        (staffs.length ? staffs : ['(미입력)']).forEach((st) => { D.byStaff[st] = (D.byStaff[st] || 0) + fee / (staffs.length || 1); out.names.add(st); });
+        const claim = V(r, '청구액');
+        (staffs.length ? staffs : ['(미입력)']).forEach((st) => { const k = staffs.length || 1; D.byStaff[st] = (D.byStaff[st] || 0) + fee / k; D.staffClaim[st] = (D.staffClaim[st] || 0) + claim / k; D.staffPts[st] = (D.staffPts[st] || 0) + 1 / k; out.names.add(st); });
       }
     }
     break;
   }
   Object.values(out.days).forEach((D) => {
     if (D.charts) { D.patients = D.charts.size; D.newPatients = D.newCharts.size; delete D.charts; delete D.newCharts;
-      ['byDoctor', 'byStaff'].forEach((k) => Object.keys(D[k]).forEach((n) => { D[k][n] = Math.round(D[k][n]); })); }
+      ['byDoctor', 'byStaff', 'staffClaim'].forEach((k) => Object.keys(D[k]).forEach((n) => { D[k][n] = Math.round(D[k][n]); }));
+      ['staffPts', 'doctorPts'].forEach((k) => Object.keys(D[k]).forEach((n) => { D[k][n] = Math.round(D[k][n] * 10) / 10; })); }
   });
   return out;
 }
@@ -845,11 +1081,8 @@ async function applyDentweb(parsed) {
 }
 
 // ---------- 대시보드 ----------
-async function renderDash() {
-  const now = new Date();
-  const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+async function dashData(month) {
   const [y, m] = month.split('-').map(Number);
-  const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
   const [ds, incDoc, incAll, people, salSnap, org, products] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'incentive', month)),
     getDocs(collection(db, 'incentive')), loadPeople(), getDocs(collection(db, 'salaries')), loadOrg(), loadProducts(true)]);
   let inc = incDoc.exists() ? incDoc.data() : null;
@@ -900,6 +1133,21 @@ async function renderDash() {
   const goodsRate = num(inc?.goodsRate);
   const goodsTotal = Object.values(goodsBy).reduce((s, v) => s + Math.max(0, v.mg) * goodsRate / 100, 0);
   const incTotal = teamCards.reduce((s, c) => s + c.amt, 0) + unitRes.reduce((s, u) => s + u.amt, 0) + docRes.reduce((s, d) => s + d.amt, 0) + goodsTotal;
+  const sumMap = (key) => { const o = {}; days.forEach((x) => Object.entries(x.dw?.[key] || {}).forEach(([n, v]) => { o[n] = (o[n] || 0) + num(v); })); return o; };
+  const staffClaim = sumMap('staffClaim'), staffPts = sumMap('staffPts'), doctorPts = sumMap('doctorPts');
+  const claimTotal = days.reduce((s2, x) => s2 + num(x.dw?.claim), 0);
+  const claimByDay = {}; days.forEach((x) => { claimByDay[x.id] = num(x.dw?.claim); });
+  return { staffClaim, staffPts, doctorPts, claimTotal, claimByDay, ds, incDoc, inc, staff, doctors, teamOf, target, clinicTeams, days, paid, patients, newPts, byDoctor, byDay, total, byStaff, adj, ADJ, adjSum, pct, ring, totalAdj, totalOver, teamCards, unitRes, docRes, goodsBy, goodsRate, goodsTotal, incTotal, ratio };
+}
+
+async function renderDash() {
+  const now = new Date();
+  const month = sub?.month || `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
+  const [y, m] = month.split('-').map(Number);
+  const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  const D = await dashData(month);
+  const { ds, incDoc, inc, staff, doctors, teamOf, target, clinicTeams, days, paid, patients, newPts, byDoctor, byDay, total, byStaff, adj, ADJ, adjSum, pct, ring, totalAdj, totalOver, teamCards, unitRes, docRes, goodsBy, goodsRate, goodsTotal, incTotal, ratio } = D;
+  publishPerf(month, D).catch((e) => console.error('성과 공개 실패', e));
   const maxDay = Math.max(1, ...byDay.map((x) => x.v));
   const W = (n) => comma(Math.round(n));
 

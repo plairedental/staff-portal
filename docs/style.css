@@ -709,3 +709,18 @@ table.statT td { text-align: right; }
 .dwSum span { display: block; font-size: .75rem; color: var(--muted); }
 .dwSum b { font-variant-numeric: tabular-nums; }
 @media (max-width: 700px) { .dwSum { grid-template-columns: 1fr 1fr; } }
+/* 성과 */
+.bar1 i { position: relative; } .bar1 i em { position: absolute; left: 0; right: 0; bottom: 0; background: #f08bb4; border-radius: 0 0 0 0; }
+.lg { display: inline-block; width: .8rem; height: .8rem; border-radius: 3px; vertical-align: middle; margin-left: .5rem; } .lg.a { background: var(--c); } .lg.b { background: #f08bb4; }
+.dashGrid.four { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin-top: 1rem; }
+.ringRow { justify-content: space-around; margin-top: 1rem; }
+.inlineDate { width: auto !important; display: inline-block; margin-left: .6rem; font-size: .9rem; padding: .3rem .5rem; }
+.center { text-align: center; }
+/* 자기계발 발자취 */
+.timeline { position: relative; padding-left: 1.4rem; border-left: 2px solid var(--line); margin-left: .5rem; }
+.tlItem { position: relative; margin-bottom: .7rem; }
+.tlItem .tlDot { position: absolute; left: -1.85rem; top: 1.1rem; width: .8rem; height: .8rem; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-shadow: 0 0 0 2px var(--c2); }
+.tlItem.prog .tlDot { background: #f0a33a; }
+.tlItem .card { margin: 0; }
+.progT td { vertical-align: middle; }
+.schIn { width: auto !important; margin: 0; padding: .3rem; }

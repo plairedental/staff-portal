@@ -97,6 +97,33 @@ service cloud.firestore {
       allow write: if hasRole(['admin', 'chief']);
     }
     // 서류 신청: 본인과 관리자만. 직원은 '신청' 상태로만 만들고, 처리는 관리자
+    // 성과 요약: 전체는 재직자 모두, 팀 성과는 그 팀과 관리자·총괄실장만
+    match /perf/{id} {
+      allow read: if active();
+      allow write: if isAdmin();
+    }
+    match /perfTeam/{id} {
+      allow read: if hasRole(['admin', 'chief']) || (active() && resource.data.team == me().team);
+      allow write: if isAdmin();
+    }
+    // 자기계발 기록: 본인과 관리자·총괄실장
+    match /eduLogs/{id} {
+      allow read: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
+      allow create: if active() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
+    }
+    // 원내 교육 프로그램: 모두 보기, 관리자·총괄실장 편집
+    match /eduPrograms/{id} {
+      allow read: if active();
+      allow write: if hasRole(['admin', 'chief']);
+    }
+    // 교육 신청·수강: 본인은 신청/수강 완료/취소, 일정 확정은 관리자·총괄실장
+    match /eduStatus/{id} {
+      allow read: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid);
+      allow create: if hasRole(['admin', 'chief']) || (active() && request.resource.data.uid == request.auth.uid && request.resource.data.status in ['신청', '수강 완료']);
+      allow update: if hasRole(['admin', 'chief']);
+      allow delete: if hasRole(['admin', 'chief']) || (active() && resource.data.uid == request.auth.uid && resource.data.status == '신청');
+    }
     // 일계표(환자 수납 기록 포함): 관리자만
     match /daily/{id} {
       allow read, write: if isAdmin();
