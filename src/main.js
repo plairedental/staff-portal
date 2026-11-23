@@ -899,8 +899,11 @@ async function renderEduProg() {
   const recs = rs.docs.map((d) => d.data());
   const sOf = (pid) => st.find((x) => x.progId === pid && x.uid === who);
   const cats = [...new Set(progs.map((p) => p.category || '기타'))];
-  const pending = st.filter((x) => ['신청', '일정 확정', '확인 요청'].includes(x.status));
-  const staffList = people.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사');
+  // 신청은 자동으로 나눠서 보여요: 팀장 → 자기 팀 팀원만 / 총괄실장·관리자 → 전부(자기 신청은 위로 올라감)
+  const teamOf = (uid) => people.find((p) => p.uid === uid)?.team || '';
+  const myTeamOnly = me.role === 'leader' && me.team;
+  const staffList = people.filter((p) => ['active', 'roster'].includes(p.status) && (p.work || '재직') !== '퇴사' && (!myTeamOnly || p.team === me.team || p.uid === me.uid));
+  const pending = st.filter((x) => ['신청', '일정 확정', '확인 요청'].includes(x.status) && x.uid !== me.uid && (!myTeamOnly || teamOf(x.uid) === me.team));
   const whoName = who === me.uid ? '나' : staffList.find((p) => p.uid === who)?.name || '';
   const stCls = { '신청': 'st-ing', '일정 확정': 'st-ing', '확인 요청': 'st-ing', '수강 완료': 'st-ok' };
   const row = (p) => {
@@ -920,8 +923,8 @@ async function renderEduProg() {
     <div class="row between"><div><p class="eyebrow">TRAINING</p><h1>원내 교육 프로그램</h1></div>
       <div class="row">${mentor ? `<select id="who" style="width:auto" title="누구의 기록을 볼까요"><option value="${me.uid}" ${who === me.uid ? 'selected' : ''}>내 교육</option>${staffList.filter((p) => p.uid !== me.uid).map((p) => `<option value="${p.uid}" ${who === p.uid ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>` : ''}
         ${admin ? '<button class="primary" id="pAdd">+ 교육 추가</button>' : ''}</div></div>
-    <p class="muted">진행 단계: 관찰 → 보조하에 시행 → 단독 시행 → 이수. 실습은 <b>📷 기록</b>에 사진과 자가 체크를 남기면 멘토(관리자·총괄실장·팀장)가 피드백하고, 멘토가 <b>이수 인정</b>을 눌러야 이수돼요.</p>
-    ${mentor && pending.length ? `<section class="card reqBox"><h3>📨 신청·확인 요청 ${pending.length}건</h3>
+    <p class="muted">진행 단계: 관찰 → 보조하에 시행 → 단독 시행 → 이수. 실습은 <b>📷 기록</b>에 사진과 자가 체크를 남기면 멘토가 피드백하고, 멘토가 <b>이수 인정</b>을 눌러야 이수돼요.<br><small>신청은 자동으로 전달돼요 — 진료팀 팀원은 <b>우리 팀 팀장</b>, 그 외 직원과 팀장은 <b>총괄실장</b>에게 가고, 관리자는 전부 볼 수 있어요.</small></p>
+    ${mentor && pending.length ? `<section class="card reqBox"><h3>📨 ${myTeamOnly ? esc(me.team) + ' ' : ''}신청·확인 요청 ${pending.length}건</h3>
       ${pending.map((x) => `<div class="reqRow"><div><b>${esc(x.name)}</b> · ${esc(x.title)} <span class="stTag ${stCls[x.status]}">${esc(x.status)}</span><br><span class="muted sm">${esc(x.reqDate || '')}${x.schedule ? ` · 일정 ${esc(x.schedule)}` : ''}</span></div>
         <div class="row"><input type="date" class="schIn" data-s="${x.id}" value="${esc(x.schedule || '')}"><button class="sm" data-sch="${x.id}">일정 저장</button><button class="sm" data-open="${x.uid}">기록 보기</button><button class="primary sm" data-certs="${x.id}">✅ 이수 인정</button></div></div>`).join('')}</section>` : ''}
     ${who !== me.uid ? `<p class="reqNow">👀 <b>${esc(whoName)}</b>님의 교육 현황이에요.</p>` : ''}
