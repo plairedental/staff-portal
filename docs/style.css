@@ -776,3 +776,14 @@ body { word-break: keep-all; overflow-wrap: anywhere; }
 .tbars > div { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; font-size: .75rem; }
 .tbars i { display: block; width: 70%; background: var(--c); border-radius: 4px 4px 0 0; min-height: 2px; } .tbars b { margin-top: .2rem; } .tbars small { color: var(--muted); }
 .backBtn{margin:0 0 10px}
+/* 접는 글 (심화 내용) */
+details.mtog{border:1px solid var(--line,#e3e3e3);border-radius:10px;margin:12px 0;background:#fafafa;overflow:hidden}
+details.mtog>summary{cursor:pointer;list-style:none;padding:10px 14px;font-weight:600;color:var(--accent,#2b6cb0);display:flex;gap:8px;align-items:center}
+details.mtog>summary::-webkit-details-marker{display:none}
+details.mtog>summary::before{content:'▸';transition:transform .15s;display:inline-block}
+details.mtog[open]>summary::before{transform:rotate(90deg)}
+details.mtog[open]>summary{border-bottom:1px solid var(--line,#e3e3e3)}
+details.mtog>*:not(summary){margin-left:14px;margin-right:14px}
+details.mtog>*:last-child{margin-bottom:12px}
+.etb .bx.tog{background:#f2f2f2}
+.editor details.mtog,[contenteditable] details.mtog{border-style:dashed}

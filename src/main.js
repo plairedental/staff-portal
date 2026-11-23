@@ -2221,6 +2221,7 @@ function editorToolbar() {
     <span class="sep"></span>
     <button data-x="box:info" class="bx info" title="파란 상자: 핵심">파란 상자</button><button data-x="box:tip" class="bx tip" title="초록 상자: 실습">초록 상자</button><button data-x="box:warn" class="bx warn" title="노란 상자: 원장님 확인 전">⚠️ 확인 필요</button><button data-x="unbox" title="상자 없애기">상자 빼기</button>
     <button data-x="cite" title="괄호로 근거·날짜 표시">(근거)</button>
+    <button data-x="tog" class="bx tog" title="눌러야 펼쳐지는 접는 글 (심화 내용용). 접는 글 안에서 한 번 더 누르면 풀려요">▸ 접는 글</button>
     <span class="sep"></span>
     <label class="upload sm" title="사진 넣기">🖼️ 사진<input type="file" accept="image/*" id="eimg" hidden></label>
     <select data-x="imgsize" title="선택한 사진 크기"><option value="">사진 크기</option><option value="30%">작게</option><option value="55%">중간</option><option value="100%">크게</option></select>
@@ -2252,6 +2253,16 @@ function bindEditor(ed, newImgs, imgPrefix = 'img-') {
   const keep = () => { const s = getSelection(); if (s.rangeCount && ed.contains(s.anchorNode)) range = s.getRangeAt(0).cloneRange(); };
   const restore = () => { ed.focus(); if (range) { const s = getSelection(); s.removeAllRanges(); s.addRange(range); } };
   ed.addEventListener('keyup', keep); ed.addEventListener('mouseup', keep);
+  // 편집 중에는 접는 글을 모두 펼쳐 두고, 제목줄을 눌러도 접히지 않게 (제목 글자를 고칠 수 있게)
+  ed.querySelectorAll('details').forEach((d) => { d.open = true; });
+  ed.addEventListener('click', (e) => { if (e.target.closest('summary')) e.preventDefault(); });
+  ed.addEventListener('keydown', (e) => {
+    const sm = getSelection().anchorNode?.parentElement?.closest?.('summary') || (getSelection().anchorNode?.nodeName === 'SUMMARY' ? getSelection().anchorNode : null);
+    if (sm && (e.key === 'Enter' || e.key === ' ')) {
+      if (e.key === 'Enter') { e.preventDefault(); const d = sm.parentNode; let first = sm.nextElementSibling; if (!first) { first = document.createElement('p'); first.innerHTML = '<br>'; d.appendChild(first); } const r = document.createRange(); r.setStart(first, 0); r.collapse(true); const sl = getSelection(); sl.removeAllRanges(); sl.addRange(r); }
+      else { e.preventDefault(); document.execCommand('insertText', false, ' '); }
+    }
+  });
   ed.addEventListener('click', (e) => {
     ed.querySelectorAll('img.sel').forEach((x) => x.classList.remove('sel'));
     if (e.target.tagName === 'IMG') { lastImg = e.target; lastImg.classList.add('sel'); }
@@ -2292,6 +2303,18 @@ function bindEditor(ed, newImgs, imgPrefix = 'img-') {
         const head = kind === 'warn' ? '<p><b>⚠️ 원장님 확인 전이에요. 확정된 기준으로 쓰지 마세요.</b></p>' : '';
         if (tb && !text) { const box = document.createElement('div'); box.className = 'box ' + kind; box.innerHTML = head; tb.replaceWith(box); box.appendChild(tb); }
         else insertHTML(`<div class="box ${kind}">${head}<p>${text ? esc(text) : '내용을 쓰세요'}</p></div><p><br></p>`);
+      } else if (x === 'tog') {
+        const det = node && (node.nodeType === 1 ? node : node.parentNode).closest?.('details');
+        if (det && ed.contains(det)) {   // 접는 글 풀기: 제목은 굵은 문단으로 남김
+          const sm = det.querySelector(':scope > summary'); const p = document.createElement('p'); p.innerHTML = `<b>${sm?.innerHTML || ''}</b>`; sm?.remove();
+          det.replaceWith(p, ...det.childNodes); return;
+        }
+        const t = prompt('접는 글의 제목 (예: 더 알아보기 · 왜 이렇게 하나요?)', '더 알아보기');
+        if (t === null) return;
+        const tb = node && topBlock(node);
+        const text = sel.toString();
+        if (tb && !text && tb.textContent.trim()) { const d = document.createElement('details'); d.className = 'mtog'; d.open = true; d.innerHTML = `<summary>${esc(t || '더 알아보기')}</summary>`; tb.replaceWith(d); d.appendChild(tb); d.after(Object.assign(document.createElement('p'), { innerHTML: '<br>' })); }
+        else insertHTML(`<details class="mtog" open><summary>${esc(t || '더 알아보기')}</summary><p>${text ? esc(text) : '펼치면 보이는 자세한 내용을 쓰세요'}</p></details><p><br></p>`);
       } else if (x === 'unbox') {
         const tb = node && topBlock(node);
         if (tb?.classList?.contains('box')) tb.replaceWith(...tb.childNodes);
@@ -2319,6 +2342,7 @@ function bindEditor(ed, newImgs, imgPrefix = 'img-') {
 function bodyForSave(ed) {
   const c = ed.cloneNode(true);
   c.querySelectorAll('img[data-img]').forEach((i) => { i.removeAttribute('src'); i.classList.remove('sel'); });
+  c.querySelectorAll('details').forEach((d) => d.removeAttribute('open'));
   c.querySelectorAll('img:not([data-img])').forEach((i) => { if ((i.getAttribute('src') || '').startsWith('data:') && i.src.length > 200000) i.remove(); });
   return cleanHtml(c.innerHTML);
 }
