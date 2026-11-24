@@ -787,3 +787,9 @@ details.mtog>*:not(summary){margin-left:14px;margin-right:14px}
 details.mtog>*:last-child{margin-bottom:12px}
 .etb .bx.tog{background:#f2f2f2}
 .editor details.mtog,[contenteditable] details.mtog{border-style:dashed}
+.kcatGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.kcat h4{margin:0 0 8px}
+.kcat .kline{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-top:1px solid var(--line,#eee)}
+.kcat .kline:first-of-type{border-top:0}
+.kcat .kline b{font-size:1.25em}.kcat .kline small{font-size:.7em;margin-left:2px;color:var(--muted,#888)}
+.kpiRow .kC{max-width:110px}

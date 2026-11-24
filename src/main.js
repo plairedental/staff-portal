@@ -1200,7 +1200,7 @@ async function renderDaily() {
     try {
       if (dirty) await save(true);
       const ks = await getDoc(doc(db, 'settings', 'kpi'));
-      const parsed = await parseDentweb(f, ks.exists() && ks.data().items?.length ? ks.data().items : KPI_DEFAULT);
+      const parsed = await parseDentweb(f, kpiList(ks.exists() ? ks.data() : null));
       const keys = Object.keys(parsed.days).sort();
       if (!parsed.kind || !keys.length) return alert('덴트웹 진료일·수납일 기준 통계 파일이 아닌 것 같아요.');
       const known = new Set(people.map((p) => p.name));
@@ -1232,21 +1232,32 @@ async function renderDaily() {
 
 
 // 핵심진료 항목: 진료내역 글자로 세요. by: 'teeth'(치아 수) | 'visit'(진료 건수)
+const KPI_CATS = ['수면진료', '임플란트', '보철', '보존', '치주'];
+// kw는 덴트웹 진료내역 글자 (| 로 여러 개, (?!…) 같은 정규식도 됨)
 const KPI_DEFAULT = [
-  { name: '임플란트 식립', kw: '임플란트 1차 수술', by: 'teeth' },
-  { name: '수면(진정) 치료', kw: '진정처치|수면마취', by: 'visit' },
-  { name: '발치', kw: '발치', by: 'teeth' },
-  { name: '근관치료 시작', kw: '발수', by: 'teeth' },
-  { name: '크라운·보철 프렙', kw: '프렙', by: 'teeth' },
-  { name: '스케일링', kw: '치석제거', by: 'visit' },
-  { name: '레진', kw: '레진', by: 'teeth' },
+  { cat: '수면진료', name: '수면치료', kw: '의식하진정|진정처치', by: 'visit' },
+  { cat: '임플란트', name: '임플란트 식립', kw: '임플란트 1차 수술', by: 'teeth' },
+  { cat: '보철', name: '인레이', kw: '인레이 셋팅|온레이 셋팅', by: 'teeth' },
+  { cat: '보철', name: '크라운', kw: '영구접착', by: 'teeth' },
+  { cat: '보존', name: '근관치료', kw: '^(?!.*추가근관).*발수', by: 'teeth' },
+  { cat: '치주', name: '스케일링', kw: '치석제거[(\\[]연1회', by: 'visit' },
+  { cat: '치주', name: '치주치료', kw: '치주 ?소파술', by: 'teeth' },
 ];
+// 예전에 저장한 항목(분류 없음)은 새 기본값으로
+const kpiList = (d) => (d?.items?.length && d.items.some((x) => x.cat) ? d.items : KPI_DEFAULT);
 // "#16,15 임플란트 1차 수술, #36 발수, 근관확대" → [{teeth:[16,15], text:'임플란트 1차 수술'}, ...] (# 없는 항목은 앞 치아를 이어 받음)
+// 치아 범위: 같은 악궁에서 화면 순서대로 (예: 18~15 → 18,17,16,15 / 13~26 → 13…11,21…26 / 37~31 → 37…31)
+const ARCH = [[18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28], [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38],
+  [55, 54, 53, 52, 51, 61, 62, 63, 64, 65], [85, 84, 83, 82, 81, 71, 72, 73, 74, 75]];
+function toothRange(a, b) {
+  for (const arc of ARCH) { const i = arc.indexOf(a), j = arc.indexOf(b); if (i >= 0 && j >= 0) return arc.slice(Math.min(i, j), Math.max(i, j) + 1); }
+  return [a, b];
+}
 function splitTreat(t) {
   const out = []; let teeth = [];
   String(t || '').split(/,\s*(?=[^\d~\s])/).forEach((seg) => {
     seg = seg.trim(); const m = seg.match(/^#([\d,\s~]+)\s*(.*)$/);
-    if (m) { teeth = []; m[1].split(/,\s*/).forEach((x) => { const r = x.split('~').map((y) => parseInt(y, 10)).filter((y) => !isNaN(y)); if (r.length === 2 && r[1] >= r[0] && r[1] - r[0] < 10) { for (let k = r[0]; k <= r[1]; k++) teeth.push(k); } else if (r.length) teeth.push(...r); }); seg = m[2]; }
+    if (m) { teeth = []; m[1].split(/,\s*/).forEach((x) => { const r = x.split('~').map((y) => parseInt(y, 10)).filter((y) => !isNaN(y)); if (r.length === 2) teeth.push(...toothRange(r[0], r[1])); else if (r.length) teeth.push(...r); }); seg = m[2]; }
     else if (/^\d/.test(seg)) return;
     if (seg) out.push({ teeth: [...teeth], text: seg });
   });
@@ -1398,7 +1409,8 @@ async function renderDash() {
   const trend = months6.map((mo) => { const dd = tDocs.docs.filter((x) => x.data().month === mo).map((x) => x.data().dw || {});
     return { mo, fee: dd.reduce((a2, x) => a2 + num(x.fee), 0), nonpay: dd.reduce((a2, x) => a2 + num(x.nonpay), 0), claim: dd.reduce((a2, x) => a2 + num(x.claim), 0), np: num(mInfo[mo]?.newPatients) }; });
   const sumF = (k) => days.reduce((a2, x) => a2 + num(x.dw?.[k]), 0);
-  const kpiItems = kpiSet.exists() && kpiSet.data().items?.length ? kpiSet.data().items : KPI_DEFAULT;
+  const kpiItems = kpiList(kpiSet.exists() ? kpiSet.data() : null);
+  const kpiCats = [...new Set([...KPI_CATS, ...kpiItems.map((k2) => k2.cat || '기타')])].filter((c) => kpiItems.some((k2) => (k2.cat || '기타') === c));
   const kpiSum = {}; days.forEach((x) => Object.entries(x.dw?.kpi || {}).forEach(([k2, v]) => { kpiSum[k2] = (kpiSum[k2] || 0) + num(v); }));
   const mi = mInfo[month] || {};
   const routes = Object.entries(mi.routes || {}).sort((a2, b2) => b2[1] - a2[1]);
@@ -1420,10 +1432,11 @@ async function renderDash() {
         <div class="kpi"><span>내원 수 (연인원)</span><b>${comma(patients)}회</b></div><div class="kpi"><span>신환</span><b class="accent">${mi.newPatients !== undefined ? comma(mi.newPatients) : comma(newPts)}명</b></div></div></div>
       <div class="card"><h4>신환 내원경로</h4>${routes.map(([k2, v]) => `<div class="hbar"><span>${esc(k2)}</span><i style="width:${Math.round(v / maxR * 100)}%"></i><b>${v}</b></div>`).join('') || '<p class="muted sm">자료가 없어요.</p>'}</div></div>
     <h3 class="dashH">🦷 핵심 진료 <small class="muted">진료내역에서 자동으로 세요</small></h3>
-    <div class="kpis kpiN">${kpiItems.map((k2) => `<div class="kpi"><span>${esc(k2.name)}</span><b>${comma(kpiSum[k2.name] || 0)}<small>${k2.by === 'teeth' ? '개' : '건'}</small></b></div>`).join('')}</div>
+    <div class="kcatGrid">${kpiCats.map((c) => `<div class="card kcat"><h4>${esc(c)}</h4>${kpiItems.filter((k2) => (k2.cat || '기타') === c).map((k2) => `<div class="kline"><span>${esc(k2.name)}</span><b>${comma(kpiSum[k2.name] || 0)}<small>${k2.by === 'teeth' ? '개' : '건'}</small></b></div>`).join('')}</div>`).join('')}</div>
     <details class="card"><summary class="sm"><b>⚙️ 핵심 진료 항목 고치기</b></summary>
-      <p class="muted sm">덴트웹 진료내역에 들어가는 글자로 셉니다. 여러 글자는 | 로 이어요 (예: 진정처치|수면마취). 바꾼 뒤에는 덴트웹 파일을 다시 올려야 다시 세져요.</p>
-      <div id="kpiRows">${kpiItems.map((k2) => `<div class="row kpiRow"><input class="kN" value="${esc(k2.name)}" placeholder="이름"><input class="kK" value="${esc(k2.kw)}" placeholder="진료내역 글자"><select class="kB"><option value="teeth" ${k2.by === 'teeth' ? 'selected' : ''}>치아 수</option><option value="visit" ${k2.by !== 'teeth' ? 'selected' : ''}>진료 건수</option></select><button class="ghost sm kX">✕</button></div>`).join('')}</div>
+      <p class="muted sm">덴트웹 진료내역에 들어가는 글자로 셉니다. 여러 글자는 | 로 이어요 (예: 인레이 셋팅|온레이 셋팅). 분류는 수면진료·임플란트·보철·보존·치주 중에 고르거나 새로 적어도 돼요. 바꾼 뒤에는 덴트웹 파일을 다시 올려야 다시 세져요.</p>
+      <div id="kpiRows">${kpiItems.map((k2) => `<div class="row kpiRow"><input class="kC" list="kcatL" value="${esc(k2.cat || '')}" placeholder="분류"><input class="kN" value="${esc(k2.name)}" placeholder="이름"><input class="kK" value="${esc(k2.kw)}" placeholder="진료내역 글자"><select class="kB"><option value="teeth" ${k2.by === 'teeth' ? 'selected' : ''}>치아 수</option><option value="visit" ${k2.by !== 'teeth' ? 'selected' : ''}>진료 건수</option></select><button class="ghost sm kX">✕</button></div>`).join('')}</div>
+      <datalist id="kcatL">${KPI_CATS.map((c) => `<option value="${c}">`).join('')}</datalist>
       <div class="row"><button class="sm" id="kAdd">+ 항목</button><button class="primary sm" id="kSave">저장</button></div></details>
     <h3 class="dashH">📈 6개월 흐름</h3>
     <div class="dashGrid three"><div class="card"><h4>총 매출 <small class="muted">(억)</small></h4>${trendBars('fee')}</div><div class="card"><h4>비급여 <small class="muted">(억)</small></h4>${trendBars('nonpay')}</div><div class="card"><h4>신환 <small class="muted">(명)</small></h4>${trendBars('np')}</div></div>
@@ -1471,12 +1484,12 @@ async function renderDash() {
         ${Object.entries(byStaff).sort((a2, b2) => b2[1] - a2[1]).map(([n, v]) => { const p = staff.find((x) => x.name === n); return `<tr><td>${esc(n)}</td><td>${esc(p ? teamOf(p) || '직원' : n === '(미입력)' ? '담당직원 미입력' : '명부에 없음')}</td><td class="r">${W(v)}</td></tr>`; }).join('')}</table></div>
         <p class="muted sm">덴트웹 진료일 기준 통계의 진료의사·담당직원으로 나눠요. 원장·직원이 여러 명이면 똑같이 나눠요.</p></div>
     </div>`);
-  const kRow = () => '<div class="row kpiRow"><input class="kN" placeholder="이름"><input class="kK" placeholder="진료내역 글자"><select class="kB"><option value="teeth">치아 수</option><option value="visit">진료 건수</option></select><button class="ghost sm kX">✕</button></div>';
+  const kRow = () => '<div class="row kpiRow"><input class="kC" list="kcatL" placeholder="분류"><input class="kN" placeholder="이름"><input class="kK" placeholder="진료내역 글자"><select class="kB"><option value="teeth">치아 수</option><option value="visit">진료 건수</option></select><button class="ghost sm kX">✕</button></div>';
   const bindKX = () => $app.querySelectorAll('.kX').forEach((b2) => b2.onclick = () => b2.closest('.kpiRow').remove());
   bindKX();
   document.getElementById('kAdd').onclick = () => { document.getElementById('kpiRows').insertAdjacentHTML('beforeend', kRow()); bindKX(); };
   document.getElementById('kSave').onclick = async () => {
-    const items = [...$app.querySelectorAll('.kpiRow')].map((r2) => ({ name: r2.querySelector('.kN').value.trim(), kw: r2.querySelector('.kK').value.trim(), by: r2.querySelector('.kB').value })).filter((x) => x.name && x.kw);
+    const items = [...$app.querySelectorAll('.kpiRow')].map((r2) => ({ cat: r2.querySelector('.kC').value.trim() || '기타', name: r2.querySelector('.kN').value.trim(), kw: r2.querySelector('.kK').value.trim(), by: r2.querySelector('.kB').value })).filter((x) => x.name && x.kw);
     await setDoc(doc(db, 'settings', 'kpi'), { items }); toast('저장했어요. 덴트웹 파일을 다시 올리면 새 기준으로 세져요');
   };
   document.getElementById('mPrev').onclick = () => go('dash', { month: shift(-1) });
