@@ -1241,8 +1241,9 @@ const KPI_DEFAULT = [
   { cat: '보철', name: '크라운', kw: '영구접착 ?[(\\[] ?P ?[./]? ?S', by: 'teeth' },
   { cat: '보존', name: '근관치료', kw: '^(?!.*추가근관).*발수', by: 'teeth' },
   { cat: '보존', name: 'VPT', kw: 'MTA', by: 'teeth' },
-  { cat: '보존', name: '레진 수복', kw: '구치부 ?레진|전치부 ?레진', by: 'teeth' },
-  { cat: '보존', name: '스탬프 레진', kw: '[Ss]tamp|스탬프', by: 'teeth' },
+  { cat: '보존', name: '레진 수복', kw: '구치부 ?레진|전치부 ?레진|광중합형 ?복합레진', by: 'teeth' },
+  { cat: '보존', name: '치경부 레진', kw: '치경부 ?레진', by: 'teeth' },
+  { cat: '보존', name: '스탬프 레진', kw: '[Ss]tamp ?[Aa]lgi', by: 'teeth' },
   { cat: '치주', name: '스케일링', kw: '치석제거[(\\[]연1회', by: 'visit' },
   { cat: '치주', name: '치주치료', kw: '치주 ?소파술', by: 'visit' },
 ];
