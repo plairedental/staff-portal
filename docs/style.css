@@ -793,3 +793,30 @@ details.mtog>*:last-child{margin-bottom:12px}
 .kcat .kline:first-of-type{border-top:0}
 .kcat .kline b{font-size:1.25em}.kcat .kline small{font-size:.7em;margin-left:2px;color:var(--muted,#888)}
 .kpiRow .kC{max-width:110px}
+/* 그래프 색 (갈색 대신 밝고 구분되는 색) */
+:root { --ch1: #3b82f6; --ch2: #10b981; --ch3: #8b5cf6; --ch4: #f59e0b; }
+.bar1 i, .tbars i, .hbar i { background: var(--ch1); }
+.hbar i { background: linear-gradient(90deg, #60a5fa, #3b82f6); }
+.ring { background: conic-gradient(var(--ch1) calc(var(--p) * 1%), #eef2f7 0); }
+.vbars { display: flex; align-items: flex-end; gap: .6rem; height: 170px; padding-top: .3rem; }
+.vbars > div { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; font-size: .76rem; min-width: 0; }
+.vbars i { display: block; width: 72%; max-width: 54px; border-radius: 6px 6px 0 0; min-height: 2px; background: var(--bc); opacity: 1; transform-origin: bottom; animation: vgrow .6s cubic-bezier(.2,.8,.2,1) both; }
+.vbars > div.sel i { opacity: 1; }
+.vbars b { margin-bottom: .2rem; font-size: .78rem; white-space: nowrap; } .vbars small { color: var(--muted); margin-top: .25rem; }
+.vbars > div:nth-child(2) i { animation-delay: .04s } .vbars > div:nth-child(3) i { animation-delay: .08s } .vbars > div:nth-child(4) i { animation-delay: .12s } .vbars > div:nth-child(5) i { animation-delay: .16s } .vbars > div:nth-child(6) i { animation-delay: .2s } .vbars > div:nth-child(7) i { animation-delay: .24s }
+@keyframes vgrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.axisNote { font-size: .7rem; color: var(--muted); text-align: right; margin: .2rem 0 0; }
+.kcat .kline { width: 100%; background: none; border: 0; border-top: 1px solid var(--line, #eee); border-radius: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.kcat .kline:hover { background: #f3f6ff; }
+.kcat .kline.on { background: #eef2ff; box-shadow: inset 3px 0 0 var(--ch3); }
+.kcat .kline.on span { color: var(--ch3); font-weight: 700; }
+.kboard { margin-top: 12px; }
+.kboard h4 { margin: 0; }
+.chg { display: inline-block; font-size: .78rem; font-weight: 700; color: var(--muted); }
+.chg.up { color: #16a34a; } .chg.down { color: #dc2626; }
+.kpi .chg { display: block; margin-top: .15rem; }
+.meetT tr.strong td { font-weight: 700; }
+.onlyPrint { display: none; }
+@media print { .onlyPrint { display: block; } .vbars i { animation: none; } .card { break-inside: avoid; } }
+.vbars.hasSel > div:not(.sel) i { opacity: .4; }
+.dashK .kpi b small { font-size: .5em; color: var(--muted); margin-left: 3px; display: inline; font-weight: 600; }

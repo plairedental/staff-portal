@@ -176,10 +176,11 @@ function categories() {
   const f = (items) => (items || []).filter((i) => !i[4] || i[4]());
   return [
     { key: 'biz', label: '경영·통계', icon: '📊', show: () => me.role === 'admin', items: [
-    ], admin: [
-      ['dash', '대시보드', '📊', '이번 달 목표 대비 성과와 인센티브를 한눈에 봐요.', () => me.role === 'admin'],
+      ['dash', '대시보드', '📊', '이번 달 매출·환자·핵심 진료와 목표 대비 성과를 한눈에 봐요.', () => me.role === 'admin'],
+      ['meet', '회의 자료', '🗓️', '주간·월간 회의용 핵심 지표를 지난 기간과 비교해 봐요.', () => me.role === 'admin'],
       ['daily', '일계표', '🧮', '날짜별 수입·지출·구강용품 판매와 마감을 기록해요.', () => me.role === 'admin'],
-      ['goods', '구강용품', '🪥', '구강용품 품목·가격·재고·매입·판매를 관리해요.', () => me.role === 'admin'],
+      ['goods', '구강용품', '🪥', '구강용품 품목·가격·재고·매입·판매를 관리해요.', () => me.role === 'admin']
+    ], admin: [
       ['incentive', '목표매출·인센티브', '🎯', '인건비 비율로 목표 매출을 정하고 팀별 인센티브를 계산해요.', () => me.role === 'admin']
     ] },
     { key: 'perf', label: '성과', icon: '🏅', items: [
@@ -272,7 +273,7 @@ function shell(content) {
           <div class="sideGroup"><div class="sideTitle">👤 내 계정</div>${MY_ITEMS.map(btn).join('')}</div>
         </div>
       </aside>
-      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'daily', 'goods', 'perf', 'edu', 'eduprog'].includes(key) ? 'wide' : ''}">${content}</main>
+      <main class="${['work:schedule', 'payroll', 'work:all', 'org', 'm:log', 'docs', 'incentive', 'dash', 'meet', 'daily', 'goods', 'perf', 'edu', 'eduprog'].includes(key) ? 'wide' : ''}">${content}</main>
     </div>`;
   $app.querySelectorAll('[data-cat]').forEach((b) => b.onclick = () => { const c = cats.find((x) => x.key === b.dataset.cat); goKey((c.items[0] || c.admin[0])[0]); });
   $app.querySelectorAll('aside [data-k]').forEach((b) => b.onclick = () => goKey(b.dataset.k));
@@ -323,6 +324,7 @@ async function render() {
     if (view === 'settings' && me.role === 'admin') return renderSettings();
     if (view === 'incentive' && me.role === 'admin') return await renderIncentive();
     if (view === 'dash' && me.role === 'admin') return await renderDash();
+    if (view === 'meet' && me.role === 'admin') return await renderMeet();
     if (view === 'perf') return await renderPerfDash();
     if (view === 'edu') return await renderEdu();
     if (view === 'eduprog') return await renderEduProg();
@@ -1329,6 +1331,89 @@ async function parseDentweb(file, kpis = KPI_DEFAULT) {
   });
   return out;
 }
+// ---------- 회의 자료 (주간·월간) ----------
+// 월간회의 기준: 환자 현황 · 예약 현황 · 매출 현황 · 진료 현황. 지난 기간과 비교
+async function renderMeet() {
+  const mode = sub?.mode || 'week';
+  const at = sub?.at ? new Date(sub.at + 'T00:00:00') : new Date();
+  let st, en, ps, pe, title, prevLbl;
+  if (mode === 'week') {
+    st = new Date(at); st.setDate(st.getDate() - ((st.getDay() + 6) % 7)); en = new Date(st); en.setDate(en.getDate() + 6);
+    ps = new Date(st); ps.setDate(ps.getDate() - 7); pe = new Date(st); pe.setDate(pe.getDate() - 1);
+    title = `${st.getMonth() + 1}월 ${st.getDate()}일(월) ~ ${en.getMonth() + 1}월 ${en.getDate()}일(일)`; prevLbl = '지난주';
+  } else {
+    st = new Date(at.getFullYear(), at.getMonth(), 1); en = new Date(at.getFullYear(), at.getMonth() + 1, 0);
+    ps = new Date(at.getFullYear(), at.getMonth() - 1, 1); pe = new Date(at.getFullYear(), at.getMonth(), 0);
+    title = `${st.getFullYear()}년 ${st.getMonth() + 1}월`; prevLbl = '지난달';
+  }
+  const S = ymd(st), E = ymd(en), PS = ymd(ps), PE = ymd(pe);
+  const months = [...new Set([PS, PE, S, E].map((d) => d.slice(0, 7)))];
+  const [dsn, kpiSet, mc, mp] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', 'in', months))), getDoc(doc(db, 'settings', 'kpi')),
+    getDoc(doc(db, 'dwMonth', S.slice(0, 7))), getDoc(doc(db, 'dwMonth', PS.slice(0, 7)))]);
+  const all = dsn.docs.map((x) => ({ id: x.id, ...x.data() })).filter((x) => x.dw);
+  const cur = all.filter((x) => x.id >= S && x.id <= E), prev = all.filter((x) => x.id >= PS && x.id <= PE);
+  const kpiItems = kpiList(kpiSet.exists() ? kpiSet.data() : null);
+  const agg = (days) => {
+    const f = (k) => days.reduce((a, x) => a + num(x.dw?.[k]), 0);
+    const work = days.filter((x) => num(x.dw?.fee) || num(x.dw?.patients)).length;
+    const routes = {}; days.forEach((x) => Object.entries(x.dw?.routes || {}).forEach(([k, v]) => { routes[k] = (routes[k] || 0) + num(v); }));
+    return { fee: f('fee'), nonpay: f('nonpay'), claim: f('claim'), copay: f('copay'), visits: f('patients'), np: f('newPatients'), work, avg: work ? f('patients') / work : 0, routes, kpi: kpiCount(days, kpiItems) };
+  };
+  const A = agg(cur), B = agg(prev);
+  const MC = mc.exists() ? mc.data() : {}, MP = mp.exists() ? mp.data() : {};
+  const won = (v) => comma(Math.round(v)) + '원', ppl = (u) => (v) => comma(Math.round(v)) + u, dec = (u) => (v) => (Math.round(v * 10) / 10).toLocaleString() + u;
+  const tr = (label, a, b, fmt, strong) => `<tr${strong ? ' class="strong"' : ''}><td>${label}</td><td class="r"><b>${fmt(a)}</b></td><td class="r muted">${fmt(b)}</td><td class="r">${chg(a, b)}</td></tr>`;
+  const head = `<tr><th>항목</th><th class="r">${mode === 'week' ? '이번 주' : '이번 달'}</th><th class="r">${prevLbl}</th><th class="r">변화</th></tr>`;
+  const lastDay = cur.filter((x) => num(x.dw?.fee)).map((x) => x.id).sort().pop() || '';
+  const partial = lastDay && lastDay < E && E >= today() ? `<p class="fresh">📅 ${+lastDay.slice(5, 7)}월 ${+lastDay.slice(8)}일 진료분까지 반영된 중간 집계예요.</p>` : (!cur.length ? '<p class="fresh warn">⚠️ 이 기간의 덴트웹 자료가 아직 없어요. 일계표에 진료일 기준 파일을 올려 주세요.</p>' : '');
+  const rt = Object.entries(A.routes).filter(([k]) => k !== '(미입력)').sort((a, b) => b[1] - a[1]);
+  const rtMiss = num(A.routes['(미입력)']); const rtMax = Math.max(1, ...rt.map((r) => r[1]));
+  // 세부 흐름: 주간 → 요일별, 월간 → 주차별
+  let detail = '';
+  if (mode === 'week') {
+    const dl = Array.from({ length: 7 }, (_, i) => { const d = new Date(st); d.setDate(d.getDate() + i); const id = ymd(d); const x = cur.find((c) => c.id === id); return { id, d, fee: num(x?.dw?.fee), v: num(x?.dw?.patients), np: num(x?.dw?.newPatients) }; }).filter((x) => x.fee || x.v || x.d.getDay() !== 0);
+    const wk = ['일', '월', '화', '수', '목', '금', '토'];
+    detail = `<div class="dashGrid two"><div class="card"><h4>요일별 매출 <small class="muted">(만원)</small></h4>${vbars(dl.map((x) => ({ label: wk[x.d.getDay()], v: x.fee })), { zero: true, color: 'var(--ch1)', fmt: (v) => comma(Math.round(v / 1e4)) })}</div>
+      <div class="card"><h4>요일별 내원 수 <small class="muted">(명)</small></h4>${vbars(dl.map((x) => ({ label: wk[x.d.getDay()], v: x.v })), { zero: true, color: 'var(--ch4)', fmt: (v) => comma(v) })}</div></div>`;
+  } else {
+    const weeks = []; const d = new Date(st);
+    while (d <= en) { const ws = new Date(d); const we = new Date(d); we.setDate(we.getDate() + (6 - ((we.getDay() + 6) % 7))); if (we > en) we.setTime(en.getTime());
+      const days = cur.filter((x) => x.id >= ymd(ws) && x.id <= ymd(we)); weeks.push({ lbl: `${ws.getDate()}~${we.getDate()}일`, ...agg(days) }); d.setTime(we.getTime()); d.setDate(d.getDate() + 1); }
+    detail = `<div class="card"><h4>주차별 흐름</h4><div class="tbl"><table class="mt incT"><tr><th>기간</th><th class="r">총매출</th><th class="r">비급여</th><th class="r">내원 수</th><th class="r">신환</th></tr>
+      ${weeks.map((w, i) => `<tr><td>${i + 1}주 <small class="muted">${w.lbl}</small></td><td class="r">${won(w.fee)}</td><td class="r">${won(w.nonpay)}</td><td class="r">${comma(w.visits)}</td><td class="r">${comma(w.np)}</td></tr>`).join('')}</table></div></div>`;
+  }
+  const shiftAt = (n) => { const d = new Date(st); if (mode === 'week') d.setDate(d.getDate() + 7 * n); else d.setMonth(d.getMonth() + n); return ymd(d); };
+  shell(`
+    <div class="row between"><div><p class="eyebrow">MEETING</p><h1>회의 자료</h1></div>
+      <div class="row noprint"><div class="chips seg2"><button class="${mode === 'week' ? 'on' : ''}" data-mode="week">주간</button><button class="${mode === 'month' ? 'on' : ''}" data-mode="month">월간</button></div>
+        <button class="ghost" id="pPrev">◀</button><b class="monthLbl">${title}</b><button class="ghost" id="pNext">▶</button><button class="ghost" id="pPrint">🖨️ 인쇄</button></div></div>
+    <p class="onlyPrint"><b>${title} ${mode === 'week' ? '주간' : '월간'} 회의 자료</b></p>
+    ${partial}
+    <div class="kpis dashK">
+      <div class="kpi"><span>총 매출</span><b>${comma(Math.round(A.fee / 1e4))}<small>만원</small></b>${chg(A.fee, B.fee)}</div>
+      <div class="kpi"><span>비급여</span><b>${comma(Math.round(A.nonpay / 1e4))}<small>만원</small></b>${chg(A.nonpay, B.nonpay)}</div>
+      <div class="kpi"><span>신환</span><b>${comma(A.np)}<small>명</small></b>${chg(A.np, B.np)}</div>
+      <div class="kpi"><span>일평균 내원</span><b>${dec('')(A.avg)}<small>명</small></b>${chg(A.avg, B.avg)}</div></div>
+    <div class="dashGrid two">
+      <div class="card"><h4>💰 매출 현황</h4><div class="tbl"><table class="mt incT meetT">${head}
+        ${tr('총 매출 (총진료비)', A.fee, B.fee, won, true)}${tr('비급여', A.nonpay, B.nonpay, won)}${tr('공단 청구액', A.claim, B.claim, won)}${tr('본인부담', A.copay, B.copay, won)}</table></div></div>
+      <div class="card"><h4>👥 환자 현황</h4><div class="tbl"><table class="mt incT meetT">${head}
+        ${mode === 'month' ? tr('총 환자 수 (실인원)', num(MC.patients), num(MP.patients), ppl('명'), true) : ''}
+        ${tr('내원 수 (연인원)', A.visits, B.visits, ppl('명'), mode === 'week')}${tr('신환', A.np, B.np, ppl('명'))}${tr('진료일수', A.work, B.work, ppl('일'))}${tr('일평균 내원', A.avg, B.avg, dec('명'))}</table></div></div>
+    </div>
+    <div class="dashGrid two">
+      <div class="card"><h4>🦷 진료 현황</h4><div class="tbl"><table class="mt incT meetT">${head}
+        ${kpiItems.map((k) => tr(`<small class="muted">${esc(k.cat || '')}</small> ${esc(k.name)}`, num(A.kpi[k.name]), num(B.kpi[k.name]), ppl(k.by === 'teeth' ? '개' : '건'))).join('')}</table></div></div>
+      <div class="card"><h4>🧭 신환 내원경로</h4>${rt.map(([k, v]) => `<div class="hbar"><span>${esc(k)}</span><i style="width:${Math.round(v / rtMax * 100)}%"></i><b>${v}</b></div>`).join('') || '<p class="muted sm">입력된 내원경로가 없어요.</p>'}
+        ${rtMiss ? `<p class="muted sm">미입력(가까워서 내원) ${rtMiss}명은 빼고 보여요.</p>` : ''}
+        <h4 style="margin-top:1rem">📅 예약 현황</h4><p class="muted sm">예약 수·예약 이행률·워크인은 덴트웹 예약 파일을 연결하면 여기에 나와요.</p></div>
+    </div>
+    ${detail}`);
+  $app.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => go('meet', { mode: b.dataset.mode }));
+  document.getElementById('pPrev').onclick = () => go('meet', { mode, at: shiftAt(-1) });
+  document.getElementById('pNext').onclick = () => go('meet', { mode, at: shiftAt(1) });
+  document.getElementById('pPrint').onclick = () => window.print();
+}
 // 저장된 진료내역 합계(tx)로 지금 기준에 맞춰 셈. tx가 없는 예전 자료는 올릴 때 센 값(kpi) 사용
 function kpiCount(days, items) {
   const out = {};
@@ -1358,6 +1443,16 @@ async function applyDentweb(parsed) {
 }
 
 // ---------- 대시보드 ----------
+// 막대그래프: 값이 비슷해도 차이가 보이게 세로축을 자동으로 맞춤 (0이 아닌 곳부터 시작하면 아래에 표시)
+function vbars(pts, { fmt = (v) => comma(Math.round(v)), color = 'var(--ch1)', zero = false, sel = -1 } = {}) {
+  const vals = pts.map((p) => num(p.v)), pos = vals.filter((v) => v > 0);
+  const M = Math.max(0, ...vals), m = pos.length ? Math.min(...pos) : 0;
+  let base = 0;
+  if (!zero && pos.length > 1 && M > 0) base = M === m ? M * 0.5 : Math.max(0, m - (M - m) * 0.6);
+  const h = (v) => (v <= 0 ? 0 : Math.round(14 + ((v - base) / ((M - base) || 1)) * 86));
+  return `<div class="vbars${sel >= 0 ? ' hasSel' : ''}" style="--bc:${color}">${pts.map((p, i) => `<div class="${i === sel ? 'sel' : ''}"><b>${p.v ? fmt(p.v) : '-'}</b><i style="height:${h(num(p.v))}%" title="${esc(p.label)} ${fmt(num(p.v))}"></i><small>${esc(p.label)}</small></div>`).join('')}</div>${base > 0 ? `<p class="axisNote">세로축은 ${fmt(base)}부터 시작해요</p>` : ''}`;
+}
+const chg = (cur, prev) => { if (!prev) return '<span class="chg">-</span>'; const r = (cur - prev) / prev * 100; return `<span class="chg ${r > 0.05 ? 'up' : r < -0.05 ? 'down' : ''}">${r > 0.05 ? '▲ ' + r.toFixed(1) + '%' : r < -0.05 ? '▼ ' + Math.abs(r).toFixed(1) + '%' : '변화 없음'}</span>`; };
 async function dashData(month) {
   const [y, m] = month.split('-').map(Number);
   const [ds, incDoc, incAll, people, salSnap, org, products] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'incentive', month)),
@@ -1441,7 +1536,14 @@ async function renderDash() {
   const routes = Object.entries(mi.routes || {}).sort((a2, b2) => b2[1] - a2[1]);
   const maxR = Math.max(1, ...routes.map((r2) => r2[1]));
   const mx = (k) => Math.max(1, ...trend.map((t2) => t2[k]));
-  const trendBars = (k, unit = '') => `<div class="tbars">${trend.map((t2) => `<div><i style="height:${Math.round(t2[k] / mx(k) * 100)}%" title="${W(t2[k])}${unit}"></i><b>${k === 'np' ? t2[k] : (t2[k] / 1e8).toFixed(1)}</b><small>${+t2.mo.slice(5)}월</small></div>`).join('')}</div>`;
+  const trendBars = (k, color) => vbars(trend.map((t2) => ({ label: +t2.mo.slice(5) + '월', v: t2[k] })), { color, sel: 5, fmt: k === 'np' ? (v) => comma(v) : (v) => (v / 1e8).toFixed(2) });
+  void mx;
+  // 핵심 진료 6개월 추이 (항목 이름을 누르면 바뀜)
+  const kpiTrend = {}; kpiItems.forEach((k2) => { kpiTrend[k2.name] = months6.map((mo) => kpiCount(tDocs.docs.filter((x) => x.data().month === mo).map((x) => x.data()), [k2])[k2.name] || 0); });
+  const kBoard = (name) => { const k2 = kpiItems.find((x) => x.name === name) || kpiItems[0]; if (!k2) return ''; const t = kpiTrend[k2.name]; const u = k2.by === 'teeth' ? '개' : '건';
+    const avg = t.slice(0, 5).filter((v) => v > 0); const av = avg.length ? avg.reduce((a2, b2) => a2 + b2, 0) / avg.length : 0;
+    return `<div class="row between"><h4>📈 ${esc(k2.cat || '')} · ${esc(k2.name)} <small class="muted">최근 6개월</small></h4><div class="sm">이번 달 <b>${comma(t[5])}${u}</b> · 지난달 대비 ${chg(t[5], t[4])} · 이전 평균 ${av ? av.toFixed(1) + u : '-'}</div></div>
+      ${vbars(months6.map((mo, i) => ({ label: +mo.slice(5) + '월', v: t[i] })), { color: 'var(--ch3)', sel: 5, fmt: (v) => comma(v) })}`; };
   const lastDay = days.filter((x) => num(x.dw?.fee)).map((x) => x.id).sort().pop() || '';
   const feeAt = days.map((x) => x.dw?.feeAt || '').sort().pop() || '';
 
@@ -1457,14 +1559,16 @@ async function renderDash() {
         <div class="kpi"><span>내원 수 (연인원)</span><b>${comma(patients)}회</b></div><div class="kpi"><span>신환</span><b class="accent">${mi.newPatients !== undefined ? comma(mi.newPatients) : comma(newPts)}명</b></div></div></div>
       <div class="card"><h4>신환 내원경로</h4>${routes.map(([k2, v]) => `<div class="hbar"><span>${esc(k2)}</span><i style="width:${Math.round(v / maxR * 100)}%"></i><b>${v}</b></div>`).join('') || '<p class="muted sm">자료가 없어요.</p>'}</div></div>
     <h3 class="dashH">🦷 핵심 진료 <small class="muted">진료내역에서 자동으로 세요</small></h3>
-    <div class="kcatGrid">${kpiCats.map((c) => `<div class="card kcat"><h4>${esc(c)}</h4>${kpiItems.filter((k2) => (k2.cat || '기타') === c).map((k2) => `<div class="kline"><span>${esc(k2.name)}</span><b>${comma(kpiSum[k2.name] || 0)}<small>${k2.by === 'teeth' ? '개' : '건'}</small></b></div>`).join('')}</div>`).join('')}</div>
+    <div class="kcatGrid">${kpiCats.map((c) => `<div class="card kcat"><h4>${esc(c)}</h4>${kpiItems.filter((k2) => (k2.cat || '기타') === c).map((k2) => `<button class="kline" data-kb="${esc(k2.name)}"><span>${esc(k2.name)}</span><b>${comma(kpiSum[k2.name] || 0)}<small>${k2.by === 'teeth' ? '개' : '건'}</small></b></button>`).join('')}</div>`).join('')}</div>
+    <div class="card kboard" id="kboard">${kBoard(kpiItems[0]?.name)}</div>
+    <p class="muted sm">항목 이름을 누르면 위 그래프가 그 진료의 6개월 추이로 바뀌어요.</p>
     <details class="card"><summary class="sm"><b>⚙️ 핵심 진료 항목 고치기</b></summary>
       <p class="muted sm">덴트웹 진료내역에 들어가는 글자로 셉니다. 여러 글자는 | 로 이어요 (예: 인레이 셋팅|온레이 셋팅). 분류는 수면진료·임플란트·보철·보존·치주 중에 고르거나 새로 적어도 돼요. 저장하면 이미 올린 자료도 새 기준으로 바로 다시 세요.</p>
       <div id="kpiRows">${kpiItems.map((k2) => `<div class="row kpiRow"><input class="kC" list="kcatL" value="${esc(k2.cat || '')}" placeholder="분류"><input class="kN" value="${esc(k2.name)}" placeholder="이름"><input class="kK" value="${esc(k2.kw)}" placeholder="진료내역 글자"><select class="kB"><option value="teeth" ${k2.by === 'teeth' ? 'selected' : ''}>치아 수</option><option value="visit" ${k2.by !== 'teeth' ? 'selected' : ''}>진료 건수</option></select><button class="ghost sm kX">✕</button></div>`).join('')}</div>
       <datalist id="kcatL">${KPI_CATS.map((c) => `<option value="${c}">`).join('')}</datalist>
       <div class="row"><button class="sm" id="kAdd">+ 항목</button><button class="primary sm" id="kSave">저장</button></div></details>
     <h3 class="dashH">📈 6개월 흐름</h3>
-    <div class="dashGrid three"><div class="card"><h4>총 매출 <small class="muted">(억)</small></h4>${trendBars('fee')}</div><div class="card"><h4>비급여 <small class="muted">(억)</small></h4>${trendBars('nonpay')}</div><div class="card"><h4>신환 <small class="muted">(명)</small></h4>${trendBars('np')}</div></div>
+    <div class="dashGrid three"><div class="card"><h4>총 매출 <small class="muted">(억)</small></h4>${trendBars('fee', 'var(--ch1)')}</div><div class="card"><h4>비급여 <small class="muted">(억)</small></h4>${trendBars('nonpay', 'var(--ch2)')}</div><div class="card"><h4>신환 <small class="muted">(명)</small></h4>${trendBars('np', 'var(--ch4)')}</div></div>
     <h3 class="dashH">📅 예약</h3>
     <div class="card"><p class="muted sm">주간 예약 수·대기시간은 덴트웹 <b>예약 목록</b>·<b>접수(대기) 기록</b> 파일이 있어야 계산할 수 있어요. 파일을 받으면 연결할게요.</p></div>
     <h3 class="dashH">🎯 목표·인센티브</h3>
@@ -1512,6 +1616,9 @@ async function renderDash() {
   const kRow = () => '<div class="row kpiRow"><input class="kC" list="kcatL" placeholder="분류"><input class="kN" placeholder="이름"><input class="kK" placeholder="진료내역 글자"><select class="kB"><option value="teeth">치아 수</option><option value="visit">진료 건수</option></select><button class="ghost sm kX">✕</button></div>';
   const bindKX = () => $app.querySelectorAll('.kX').forEach((b2) => b2.onclick = () => b2.closest('.kpiRow').remove());
   bindKX();
+  const selK = (name) => { $app.querySelectorAll('.kline').forEach((b2) => b2.classList.toggle('on', b2.dataset.kb === name)); document.getElementById('kboard').innerHTML = kBoard(name); };
+  $app.querySelectorAll('.kline').forEach((b2) => b2.onclick = () => selK(b2.dataset.kb));
+  if (kpiItems[0]) selK(kpiItems[0].name);
   document.getElementById('kAdd').onclick = () => { document.getElementById('kpiRows').insertAdjacentHTML('beforeend', kRow()); bindKX(); };
   document.getElementById('kSave').onclick = async () => {
     const items = [...$app.querySelectorAll('.kpiRow')].map((r2) => ({ cat: r2.querySelector('.kC').value.trim() || '기타', name: r2.querySelector('.kN').value.trim(), kw: r2.querySelector('.kK').value.trim(), by: r2.querySelector('.kB').value })).filter((x) => x.name && x.kw);
