@@ -167,7 +167,7 @@ function renderWaiting() {
       </div>
     </div>`;
   document.getElementById('reload').onclick = () => location.reload();
-  document.getElementById('out').onclick = () => signOut(auth);
+  document.getElementById('out').onclick = () => { idb.del('manual'); mcache = null; signOut(auth); };
 }
 
 // ---------- 화면 틀: 상단 카테고리 + 좌측 메뉴 ----------
@@ -281,7 +281,7 @@ function shell(content) {
   if (cat.key === 'manual') bindManualSide();
   document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
   document.getElementById('me').onclick = (e) => { e.preventDefault(); go('my'); };
-  document.getElementById('out').onclick = () => signOut(auth);
+  document.getElementById('out').onclick = () => { idb.del('manual'); mcache = null; signOut(auth); };
 }
 // 앱 안 이동을 브라우저 기록에 남겨서, 휴대폰·브라우저 '뒤로가기'로 이전 화면에 돌아가게 함
 let navDepth = 0;
@@ -1333,12 +1333,14 @@ async function parseDentweb(file, kpis = KPI_DEFAULT) {
 }
 // ---------- 추이 보드: 대시보드의 숫자를 누르면 그 항목의 흐름을 보여줌 ----------
 let tbCache = null;
-async function loadTrendData(force) {
-  if (tbCache && !force && Date.now() - tbCache.at < 120000) return tbCache;
-  const [ds, ms] = await Promise.all([getDocs(collection(db, 'daily')), getDocs(collection(db, 'dwMonth'))]);
+// 보통은 최근 13개월만 읽고, '전체'를 누를 때만 모든 기간을 읽음
+async function loadTrendData(full = false) {
+  if (tbCache && (tbCache.full || !full) && Date.now() - tbCache.at < 120000) return tbCache;
+  const now = new Date(); const mos = Array.from({ length: 13 }, (_, i) => ymd(new Date(now.getFullYear(), now.getMonth() - i, 1)).slice(0, 7));
+  const [ds, ms] = await Promise.all([getDocs(full ? collection(db, 'daily') : query(collection(db, 'daily'), where('month', 'in', mos))), getDocs(collection(db, 'dwMonth'))]);
   const days = ds.docs.map((x) => ({ id: x.id, ...x.data() })).filter((x) => x.dw && /^\d{4}-\d{2}-\d{2}$/.test(x.id)).sort((a, b) => (a.id < b.id ? -1 : 1));
   const months = {}; ms.docs.forEach((x) => { months[x.id] = x.data(); });
-  tbCache = { at: Date.now(), days, months };
+  tbCache = { at: Date.now(), days, months, full };
   return tbCache;
 }
 const ROUTE_GROUPS = [['간판', /간판/, '#3b82f6'], ['검색', /검색|블로그|홈페이지|인터넷|SNS|인스타|카페|유튜브/, '#10b981'], ['소개', /소개/, '#f59e0b']];
@@ -1486,7 +1488,7 @@ function mountTrendBoard(root, kpiItems) {
   svg.addEventListener('pointerup', () => { drag = null; });
   svg.addEventListener('pointerleave', () => { drag = null; tip.style.display = 'none'; const cr = svg.querySelector('.cross'); if (cr) cr.style.display = 'none'; });
   svg.addEventListener('dblclick', () => { compute(); draw(true); });
-  root.querySelectorAll('[data-r]').forEach((b) => b.onclick = () => { st.range = b.dataset.r; compute(); draw(true); });
+  root.querySelectorAll('[data-r]').forEach((b) => b.onclick = async () => { st.range = b.dataset.r; if (st.range === 'all' && !st.data.full) { b.textContent = '불러오는 중…'; st.data = await loadTrendData(true); b.textContent = '전체'; } compute(); draw(true); });
   root.querySelectorAll('[data-u]').forEach((b) => b.onclick = () => { st.unit = b.dataset.u; compute(); draw(true); });
   root.querySelectorAll('[data-z]').forEach((b) => b.onclick = () => { if (b.dataset.z === 'reset') { compute(); draw(true); } else zoom(b.dataset.z === 'in' ? 0.6 : 1.6); });
   let rt; const onR = () => { clearTimeout(rt); rt = setTimeout(() => { if (document.body.contains(root)) draw(); else window.removeEventListener('resize', onR); }, 150); };
@@ -2359,12 +2361,34 @@ const REQ_ST = ['접수', '검토 중', '반영', '보류'];
 const today = () => ymd(new Date());
 const dstr = (t) => t?.toDate ? ymd(t.toDate()) : (t || '');
 
+// 기기 저장소(IndexedDB): 매뉴얼이 바뀌지 않았으면 서버에서 전체를 다시 읽지 않음
+const idb = (() => {
+  let p;
+  const open = () => p ||= new Promise((res, rej) => { const r = indexedDB.open('plaire-portal', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const run = async (mode, fn) => { const d = await open(); return new Promise((res, rej) => { const t = d.transaction('kv', mode); const q = fn(t.objectStore('kv')); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); }); };
+  return { get: (k) => run('readonly', (st) => st.get(k)).catch(() => null), set: (k, v) => run('readwrite', (st) => st.put(v, k)).catch(() => null), del: (k) => run('readwrite', (st) => st.delete(k)).catch(() => null) };
+})();
+// Firestore 시각 값은 기기에 저장할 수 있게 숫자로 바꿨다가 되돌림
+const tsOut = (o) => JSON.parse(JSON.stringify(o, function (k, v) { const raw = this[k]; return raw && typeof raw.toMillis === 'function' ? { __ts: raw.toMillis() } : v; }));
+const tsIn = (o) => JSON.parse(JSON.stringify(o), (k, v) => (v && typeof v === 'object' && '__ts' in v ? { toDate: () => new Date(v.__ts), toMillis: () => v.__ts, seconds: Math.floor(v.__ts / 1000) } : v));
 async function loadManual(force = false) {
   if (mcache && !force) return mcache;
-  const [ps, tr] = await Promise.all([getDocs(collection(db, 'manuals')), getDoc(doc(db, 'manualMeta', 'tree'))]);
+  // 편집한 직후(force)에는 '마지막 수정' 표시를 새로 남겨서 다른 기기가 새 내용을 받아 가게 함
+  let stampV = 0;
+  if (force && can.editManual()) { stampV = Date.now(); await setDoc(doc(db, 'manualMeta', 'stamp'), { v: stampV, updatedAt: serverTimestamp(), by: me.name }); }
+  const [st, tr] = await Promise.all([stampV ? null : getDoc(doc(db, 'manualMeta', 'stamp')), getDoc(doc(db, 'manualMeta', 'tree'))]);
+  if (!stampV) stampV = st?.exists() ? num(st.data().v) : 0;
+  let rows = null;
+  if (stampV && !force) { const c = await idb.get('manual'); if (c && c.v === stampV && Array.isArray(c.rows)) rows = tsIn(c.rows); }
+  if (!rows) {
+    const ps = await getDocs(collection(db, 'manuals'));
+    rows = ps.docs.map((d) => ({ id: d.id, ...d.data() }));
+    if (!stampV && can.editManual()) { stampV = Date.now(); await setDoc(doc(db, 'manualMeta', 'stamp'), { v: stampV, updatedAt: serverTimestamp(), by: me.name }).catch(() => {}); }
+    if (stampV) idb.set('manual', { v: stampV, rows: tsOut(rows) });
+  }
   const pages = {};
-  ps.docs.forEach((d) => {
-    const p = { id: d.id, ...d.data() };
+  rows.forEach((r) => {
+    const p = { ...r };
     if (p.body === undefined) p.body = '';
     if (!p.html && !/<[a-z][\s\S]*>/i.test(p.body)) p.body = `<p>${esc(p.body).replace(/\n/g, '<br>')}</p>`;   // 예전 글
     if (!p.group && !p.id.startsWith('_')) p.group = '기타';
