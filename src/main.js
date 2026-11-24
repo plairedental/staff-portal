@@ -2772,6 +2772,7 @@ async function renderMAdmin() {
     document.getElementById('mimp').onchange = async (e) => {
       const f = e.target.files[0]; if (!f) return;
       let d; try { d = JSON.parse(await f.text()); } catch (er) { alert('파일을 읽지 못했어요.'); return; }
+      if (d.type === 'plaire-manual-patch') return applyManualPatch(d);
       if (d.type !== 'plaire-manual-init') { alert('매뉴얼 파일이 아니에요.'); return; }
       if (!confirm(`페이지 ${d.pages.length}개, 사진 ${Object.keys(d.images || {}).length}장을 가져올까요?\n같은 페이지가 있으면 새 내용으로 바뀌어요.`)) return;
       const pr = document.getElementById('mprog'); let i = 0; const total = d.pages.length + Object.keys(d.images || {}).length + 2;
@@ -2790,6 +2791,39 @@ async function renderMAdmin() {
     };
   };
   draw();
+}
+
+// 부분 업데이트 파일: 페이지의 한 Part(예: Part 1)만 바꾸고 나머지는 지금 내용 그대로 둠. 예전 내용은 접는 글로 남김
+async function applyManualPatch(d) {
+  await loadManual(true);
+  const sec = d.section || 'Part 1';
+  const ok = d.pages.filter((x) => mcache.pages[x.id]);
+  if (!confirm(`${d.note || '매뉴얼 부분 업데이트'}\n페이지 ${ok.length}개의 "${sec}"만 바꿀까요?\n(나머지 내용은 그대로, 예전 내용은 접는 글로 남아요)`)) return;
+  const pr = document.getElementById('mprog'); let n = 0; const skipped = [];
+  const esc2 = sec.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try {
+    for (const x of ok) {
+      const pg = mcache.pages[x.id]; const body = pg.body || '';
+      const re = new RegExp(`<h2[^>]*>\\s*${esc2}\\b[\\s\\S]*?</h2>`);
+      const m = body.match(re);
+      if (!m) { skipped.push(pg.title); continue; }
+      const start = m.index + m[0].length;
+      const nx = body.slice(start).search(/<h2[\s>]/);
+      const end = nx < 0 ? body.length : start + nx;
+      const prevRe = /<details class="mtog"><summary>이전 내용[\s\S]*?<\/details>/;
+      const sect = body.slice(start, end), prev = sect.match(prevRe)?.[0] || '';
+      const old = sect.replace(prevRe, '').trim();
+      if (old === x.html.trim()) { skipped.push(pg.title + '(이미 같음)'); continue; }
+      const keep = old.replace(/<[^>]+>/g, '').trim() ? `<details class="mtog"><summary>이전 내용 (참고용 · 필요 없으면 지워도 돼요)</summary>${old}</details>` : prev;
+      const nb = body.slice(0, m.index) + `<h2>${x.heading || m[0].replace(/<[^>]+>/g, '')}</h2>` + x.html + keep + '\n' + body.slice(end);
+      await setDoc(doc(db, 'manuals', x.id), { body: nb, updatedAt: serverTimestamp(), updatedBy: me.name }, { merge: true });
+      await addMLog({ pageId: x.id, title: pg.title, summary: d.note || `${sec} 업데이트`, basis: '업데이트 파일' });
+      n++; if (pr) pr.textContent = `바꾸는 중… ${n}/${ok.length} ${pg.title}`;
+    }
+    await loadManual(true);
+    alert(`${n}개 페이지를 바꿨어요.` + (skipped.length ? `\n건너뛴 페이지: ${skipped.join(', ')}` : '') + (d.pages.length > ok.length ? `\n매뉴얼에 없는 페이지 ${d.pages.length - ok.length}개는 건너뛰었어요.` : ''));
+    go('manual', { tab: 'log' });
+  } catch (er) { console.error(er); alert('바꾸는 중 문제가 생겼어요: ' + (er.code || er.message)); }
 }
 
 // ---------- 연차·근무표 ----------
