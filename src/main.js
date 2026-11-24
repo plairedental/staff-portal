@@ -1235,7 +1235,7 @@ async function renderDaily() {
 const KPI_CATS = ['수면진료', '임플란트', '보철', '보존', '치주'];
 // kw는 덴트웹 진료내역 글자 (| 로 여러 개, (?!…) 같은 정규식도 됨)
 const KPI_DEFAULT = [
-  { cat: '수면진료', name: '수면치료', kw: '의식하진정|진정처치', by: 'visit' },
+  { cat: '수면진료', name: '수면치료', kw: '의식하 ?진정|정주 ?진정|수면 ?(마취|치료|진정)|N2O|아산화질소', by: 'visit' },
   { cat: '임플란트', name: '임플란트 식립', kw: '임플란트 1차 수술', by: 'teeth' },
   { cat: '보철', name: '인레이', kw: '인레이 셋팅|온레이 셋팅|인레이 접착|온레이 접착', by: 'teeth' },
   { cat: '보철', name: '크라운', kw: '영구접착 ?[(\\[] ?P ?[./]? ?S', by: 'teeth' },
@@ -1244,7 +1244,7 @@ const KPI_DEFAULT = [
   { cat: '치주', name: '치주치료', kw: '치주 ?소파술', by: 'teeth' },
 ];
 // 예전에 저장한 항목(분류 없음)은 새 기본값으로
-const kpiList = (d) => (d?.items?.length && d.items.some((x) => x.cat) ? d.items : KPI_DEFAULT);
+const kpiList = (d) => (d?.items?.length && d.items.some((x) => x.cat) ? d.items.map((x) => (x.cat === '수면진료' && /진정처치/.test(x.kw) ? { ...x, kw: KPI_DEFAULT[0].kw } : x)) : KPI_DEFAULT);
 // "#16,15 임플란트 1차 수술, #36 발수, 근관확대" → [{teeth:[16,15], text:'임플란트 1차 수술'}, ...] (# 없는 항목은 앞 치아를 이어 받음)
 // 치아 범위: 같은 악궁에서 화면 순서대로 (예: 18~15 → 18,17,16,15 / 13~26 → 13…11,21…26 / 37~31 → 37…31)
 const ARCH = [[18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28], [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38],
