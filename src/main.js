@@ -1240,8 +1240,11 @@ const KPI_DEFAULT = [
   { cat: '보철', name: '인레이', kw: '인레이 셋팅|온레이 셋팅|인레이 접착|온레이 접착', by: 'teeth' },
   { cat: '보철', name: '크라운', kw: '영구접착 ?[(\\[] ?P ?[./]? ?S', by: 'teeth' },
   { cat: '보존', name: '근관치료', kw: '^(?!.*추가근관).*발수', by: 'teeth' },
+  { cat: '보존', name: 'VPT', kw: 'MTA', by: 'teeth' },
+  { cat: '보존', name: '레진 수복', kw: '구치부 ?레진|전치부 ?레진', by: 'teeth' },
+  { cat: '보존', name: '스탬프 레진', kw: '[Ss]tamp|스탬프', by: 'teeth' },
   { cat: '치주', name: '스케일링', kw: '치석제거[(\\[]연1회', by: 'visit' },
-  { cat: '치주', name: '치주치료', kw: '치주 ?소파술', by: 'teeth' },
+  { cat: '치주', name: '치주치료', kw: '치주 ?소파술', by: 'visit' },
 ];
 // 예전에 저장한 항목(분류 없음)은 새 기본값으로
 const kpiList = (d) => (d?.items?.length && d.items.some((x) => x.cat) ? d.items.map((x) => (x.cat === '수면진료' && /진정처치/.test(x.kw) ? { ...x, kw: KPI_DEFAULT[0].kw } : x)) : KPI_DEFAULT);
@@ -1297,6 +1300,11 @@ async function parseDentweb(file, kpis = KPI_DEFAULT) {
         if (chart && dateOf(r[c('최초내원')]) === day && !M.newCharts.has(chart)) { M.newCharts.add(chart); const rt = S(r, '내원경로') || '(미입력)'; M.routes[rt] = (M.routes[rt] || 0) + 1; }
         // 핵심진료 세기
         const parts = splitTreat(S(r, '진료내역'));
+        // 진료내역 항목별 합계(환자 정보 없음) — 핵심 진료 기준을 바꿔도 다시 올리지 않고 바로 다시 셀 수 있게
+        D.txm ||= {};
+        const seen = {};
+        parts.forEach((x) => { const t = x.text.replace(/\.\.$/, '').trim(); if (!t) return; (seen[t] ||= new Set()); (x.teeth.length ? x.teeth : ['?']).forEach((th) => seen[t].add(th)); });
+        Object.entries(seen).forEach(([t, set]) => { const e = D.txm[t] ||= { v: 0, n: 0 }; e.v += 1; e.n += set.size; });
         D.kpi ||= {};
         kpis.forEach((k) => { const re = new RegExp(k.kw); const hit = parts.filter((x) => re.test(x.text)); if (!hit.length) return;
           const n = k.by === 'teeth' ? new Set(hit.flatMap((x) => x.teeth.length ? x.teeth : ['?' + x.text])).size : 1; D.kpi[k.name] = (D.kpi[k.name] || 0) + n; });
@@ -1312,9 +1320,24 @@ async function parseDentweb(file, kpis = KPI_DEFAULT) {
     break;
   }
   Object.values(out.days).forEach((D) => {
+    if (D.txm) { D.tx = Object.entries(D.txm).map(([t, e]) => ({ t, v: e.v, n: e.n })); delete D.txm; }
     if (D.charts) { D.patients = D.charts.size; D.newPatients = D.newCharts.size; delete D.charts; delete D.newCharts;
       ['byDoctor', 'byStaff', 'staffClaim'].forEach((k) => Object.keys(D[k]).forEach((n) => { D[k][n] = Math.round(D[k][n]); }));
       ['staffPts', 'doctorPts'].forEach((k) => Object.keys(D[k]).forEach((n) => { D[k][n] = Math.round(D[k][n] * 10) / 10; })); }
+  });
+  return out;
+}
+// 저장된 진료내역 합계(tx)로 지금 기준에 맞춰 셈. tx가 없는 예전 자료는 올릴 때 센 값(kpi) 사용
+function kpiCount(days, items) {
+  const out = {};
+  days.forEach((x) => {
+    const tx = x.dw?.tx;
+    items.forEach((k) => {
+      let n = 0;
+      if (tx) { let re; try { re = new RegExp(k.kw); } catch (e) { return; } tx.forEach((e) => { if (re.test(e.t)) n += k.by === 'teeth' ? e.n : e.v; }); }
+      else n = num(x.dw?.kpi?.[k.name]);
+      out[k.name] = (out[k.name] || 0) + n;
+    });
   });
   return out;
 }
@@ -1411,7 +1434,7 @@ async function renderDash() {
   const sumF = (k) => days.reduce((a2, x) => a2 + num(x.dw?.[k]), 0);
   const kpiItems = kpiList(kpiSet.exists() ? kpiSet.data() : null);
   const kpiCats = [...new Set([...KPI_CATS, ...kpiItems.map((k2) => k2.cat || '기타')])].filter((c) => kpiItems.some((k2) => (k2.cat || '기타') === c));
-  const kpiSum = {}; days.forEach((x) => Object.entries(x.dw?.kpi || {}).forEach(([k2, v]) => { kpiSum[k2] = (kpiSum[k2] || 0) + num(v); }));
+  const kpiSum = kpiCount(days, kpiItems);
   const mi = mInfo[month] || {};
   const routes = Object.entries(mi.routes || {}).sort((a2, b2) => b2[1] - a2[1]);
   const maxR = Math.max(1, ...routes.map((r2) => r2[1]));
@@ -1434,7 +1457,7 @@ async function renderDash() {
     <h3 class="dashH">🦷 핵심 진료 <small class="muted">진료내역에서 자동으로 세요</small></h3>
     <div class="kcatGrid">${kpiCats.map((c) => `<div class="card kcat"><h4>${esc(c)}</h4>${kpiItems.filter((k2) => (k2.cat || '기타') === c).map((k2) => `<div class="kline"><span>${esc(k2.name)}</span><b>${comma(kpiSum[k2.name] || 0)}<small>${k2.by === 'teeth' ? '개' : '건'}</small></b></div>`).join('')}</div>`).join('')}</div>
     <details class="card"><summary class="sm"><b>⚙️ 핵심 진료 항목 고치기</b></summary>
-      <p class="muted sm">덴트웹 진료내역에 들어가는 글자로 셉니다. 여러 글자는 | 로 이어요 (예: 인레이 셋팅|온레이 셋팅). 분류는 수면진료·임플란트·보철·보존·치주 중에 고르거나 새로 적어도 돼요. 바꾼 뒤에는 덴트웹 파일을 다시 올려야 다시 세져요.</p>
+      <p class="muted sm">덴트웹 진료내역에 들어가는 글자로 셉니다. 여러 글자는 | 로 이어요 (예: 인레이 셋팅|온레이 셋팅). 분류는 수면진료·임플란트·보철·보존·치주 중에 고르거나 새로 적어도 돼요. 저장하면 이미 올린 자료도 새 기준으로 바로 다시 세요.</p>
       <div id="kpiRows">${kpiItems.map((k2) => `<div class="row kpiRow"><input class="kC" list="kcatL" value="${esc(k2.cat || '')}" placeholder="분류"><input class="kN" value="${esc(k2.name)}" placeholder="이름"><input class="kK" value="${esc(k2.kw)}" placeholder="진료내역 글자"><select class="kB"><option value="teeth" ${k2.by === 'teeth' ? 'selected' : ''}>치아 수</option><option value="visit" ${k2.by !== 'teeth' ? 'selected' : ''}>진료 건수</option></select><button class="ghost sm kX">✕</button></div>`).join('')}</div>
       <datalist id="kcatL">${KPI_CATS.map((c) => `<option value="${c}">`).join('')}</datalist>
       <div class="row"><button class="sm" id="kAdd">+ 항목</button><button class="primary sm" id="kSave">저장</button></div></details>
@@ -1490,7 +1513,7 @@ async function renderDash() {
   document.getElementById('kAdd').onclick = () => { document.getElementById('kpiRows').insertAdjacentHTML('beforeend', kRow()); bindKX(); };
   document.getElementById('kSave').onclick = async () => {
     const items = [...$app.querySelectorAll('.kpiRow')].map((r2) => ({ cat: r2.querySelector('.kC').value.trim() || '기타', name: r2.querySelector('.kN').value.trim(), kw: r2.querySelector('.kK').value.trim(), by: r2.querySelector('.kB').value })).filter((x) => x.name && x.kw);
-    await setDoc(doc(db, 'settings', 'kpi'), { items }); toast('저장했어요. 덴트웹 파일을 다시 올리면 새 기준으로 세져요');
+    await setDoc(doc(db, 'settings', 'kpi'), { items }); toast('저장했어요. 새 기준으로 다시 셌어요'); go('dash', sub);
   };
   document.getElementById('mPrev').onclick = () => go('dash', { month: shift(-1) });
   document.getElementById('mNext').onclick = () => go('dash', { month: shift(1) });
