@@ -1331,6 +1331,173 @@ async function parseDentweb(file, kpis = KPI_DEFAULT) {
   });
   return out;
 }
+// ---------- 추이 보드: 대시보드의 숫자를 누르면 그 항목의 흐름을 보여줌 ----------
+let tbCache = null;
+async function loadTrendData(force) {
+  if (tbCache && !force && Date.now() - tbCache.at < 120000) return tbCache;
+  const [ds, ms] = await Promise.all([getDocs(collection(db, 'daily')), getDocs(collection(db, 'dwMonth'))]);
+  const days = ds.docs.map((x) => ({ id: x.id, ...x.data() })).filter((x) => x.dw && /^\d{4}-\d{2}-\d{2}$/.test(x.id)).sort((a, b) => (a.id < b.id ? -1 : 1));
+  const months = {}; ms.docs.forEach((x) => { months[x.id] = x.data(); });
+  tbCache = { at: Date.now(), days, months };
+  return tbCache;
+}
+const ROUTE_GROUPS = [['간판', /간판/, '#3b82f6'], ['검색', /검색|블로그|홈페이지|인터넷|SNS|인스타|카페|유튜브/, '#10b981'], ['소개', /소개/, '#f59e0b']];
+function trendMetrics(kpiItems) {
+  const sum = (k) => (b) => (b.days.length ? b.days.reduce((a, x) => a + num(x.dw?.[k]), 0) : null);
+  const M = {
+    fee: { label: '총 매출', unit: '원', money: true, color: '#3b82f6', get: sum('fee') },
+    nonpay: { label: '비급여', unit: '원', money: true, color: '#10b981', get: sum('nonpay') },
+    claim: { label: '공단 청구액', unit: '원', money: true, color: '#06b6d4', get: sum('claim') },
+    copay: { label: '본인부담', unit: '원', money: true, color: '#6366f1', get: sum('copay') },
+    uniq: { label: '총 환자 수 (실인원)', unit: '명', color: '#0ea5e9', monthOnly: true, get: (b, ctx) => (ctx.months[b.key]?.patients ?? null) },
+    visits: { label: '내원 수 (연인원)', unit: '명', color: '#8b5cf6', get: sum('patients') },
+    np: { label: '신환', unit: '명', color: '#f59e0b', get: sum('newPatients') },
+    avg: { label: '일평균 내원', unit: '명', color: '#ec4899', dec: true, get: (b) => { const w = b.days.filter((x) => num(x.dw?.fee) || num(x.dw?.patients)); return w.length ? w.reduce((a, x) => a + num(x.dw?.patients), 0) / w.length : null; } },
+    routes: { label: '신환 내원경로 (간판·검색·소개)', unit: '명', multi: ROUTE_GROUPS.map(([name, re, color]) => ({ name, color, get: (b) => (b.days.length ? b.days.reduce((a, x) => a + Object.entries(x.dw?.routes || {}).reduce((s, [k, v]) => s + (re.test(k) ? num(v) : 0), 0), 0) : null) })) },
+  };
+  kpiItems.forEach((k) => { M['k:' + k.name] = { label: `${k.cat ? k.cat + ' · ' : ''}${k.name}`, unit: k.by === 'teeth' ? '개' : '건', color: '#8b5cf6', get: (b) => (b.days.length ? kpiCount(b.days, [k])[k.name] || 0 : null) }; });
+  return M;
+}
+function trendBuckets(days, unit, range) {
+  const now = new Date(); const wk = (d) => { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+  const keyOf = unit === 'week' ? (id) => ymd(wk(new Date(id + 'T00:00:00'))) : (id) => id.slice(0, 7);
+  const n = { '3m': unit === 'week' ? 13 : 3, '6m': unit === 'week' ? 26 : 6, '1y': unit === 'week' ? 52 : 12 }[range];
+  let start;
+  if (n) { start = unit === 'week' ? wk(now) : new Date(now.getFullYear(), now.getMonth(), 1); if (unit === 'week') start.setDate(start.getDate() - 7 * (n - 1)); else start.setMonth(start.getMonth() - (n - 1)); }
+  else start = days.length ? (unit === 'week' ? wk(new Date(days[0].id + 'T00:00:00')) : new Date(+days[0].id.slice(0, 4), +days[0].id.slice(5, 7) - 1, 1)) : new Date(now.getFullYear(), now.getMonth(), 1);
+  const out = []; const d = new Date(start); const endKey = keyOf(ymd(now)); let prevY = null;
+  for (let guard = 0; guard < 600; guard++) {
+    const key = unit === 'week' ? ymd(d) : ymd(d).slice(0, 7);
+    const y = d.getFullYear();
+    const label = unit === 'week' ? `${d.getMonth() + 1}/${d.getDate()}` : (prevY !== y && (out.length === 0 || d.getMonth() === 0) ? `${String(y).slice(2)}년 ${d.getMonth() + 1}월` : `${d.getMonth() + 1}월`);
+    prevY = y;
+    out.push({ key, label, full: unit === 'week' ? `${y}.${d.getMonth() + 1}.${d.getDate()} 주` : `${y}년 ${d.getMonth() + 1}월`, days: [], partial: key === endKey });
+    if (key >= endKey) break;
+    if (unit === 'week') d.setDate(d.getDate() + 7); else d.setMonth(d.getMonth() + 1);
+  }
+  const idx = {}; out.forEach((b, i) => { idx[b.key] = i; });
+  days.forEach((x) => { const i = idx[keyOf(x.id)]; if (i !== undefined) out[i].days.push(x); });
+  return out;
+}
+const fmtShort = (v, money) => { if (v === null || v === undefined || isNaN(v)) return '-'; if (money) { if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(2).replace(/\.?0+$/, '') + '억'; if (Math.abs(v) >= 1e4) return comma(Math.round(v / 1e4)) + '만'; } return Math.abs(v) < 100 && v % 1 ? v.toFixed(1) : comma(Math.round(v)); };
+const fmtFull = (v, m) => (v === null || v === undefined ? '자료 없음' : (m.dec ? (Math.round(v * 10) / 10).toLocaleString() : comma(Math.round(v))) + m.unit);
+function niceStep(raw) { const p = Math.pow(10, Math.floor(Math.log10(raw || 1))); const f = raw / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; }
+
+// 보드 하나를 만들어 붙이고, select(metricKey)로 바꿈
+function mountTrendBoard(root, kpiItems) {
+  const st = { metric: 'fee', range: '6m', unit: 'month', i0: 0, i1: 0, data: null, hover: -1 };
+  const METS = trendMetrics(kpiItems);
+  root.innerHTML = `<div class="tb">
+    <div class="tbHead"><div><p class="eyebrow">TREND</p><h3 class="tbTitle"></h3><p class="tbSub muted sm"></p></div>
+      <div class="tbCtl"><div class="chips seg2 tbRange">${[['3m', '3개월'], ['6m', '6개월'], ['1y', '1년'], ['all', '전체']].map(([k, l]) => `<button data-r="${k}">${l}</button>`).join('')}</div>
+        <div class="chips seg2 tbUnit"><button data-u="month">월별</button><button data-u="week">주별</button></div>
+        <div class="tbZoom"><button data-z="in" title="확대">＋</button><button data-z="out" title="축소">－</button><button data-z="reset" title="전체 보기">⟲</button></div></div></div>
+    <div class="tbStats"></div>
+    <div class="tbPlot"><svg class="tbSvg"></svg><div class="tbTip"></div></div>
+    <div class="tbNav"><i></i></div>
+    <p class="tbHint muted sm">그래프에서 마우스 휠(또는 ＋／－)로 확대·축소, 끌어서 옆으로 이동, 두 번 눌러 전체 보기</p>
+  </div>`;
+  const $ = (q) => root.querySelector(q);
+  const svg = $('.tbSvg'), tip = $('.tbTip'), plot = $('.tbPlot');
+  const series = () => { const m = METS[st.metric] || METS.fee; return m.multi ? m.multi : [{ name: m.label, color: m.color, get: m.get }]; };
+  const compute = () => {
+    const m = METS[st.metric] || METS.fee;
+    if (m.monthOnly && st.unit === 'week') st.unit = 'month';
+    const B = trendBuckets(st.data.days, st.unit, st.range);
+    st.B = B; st.S = series().map((s) => ({ ...s, vals: B.map((b) => { const v = s.get(b, st.data); return v === null || v === undefined ? null : num(v); }) }));
+    const first = st.S[0].vals.findIndex((v) => v !== null);
+    st.i0 = st.range === 'all' && first > 0 ? first : 0; st.i1 = B.length - 1;
+  };
+  const draw = (anim) => {
+    const m = METS[st.metric] || METS.fee; const B = st.B, S = st.S;
+    svg.classList.toggle('anim', !!anim);
+    $('.tbTitle').innerHTML = `${esc(m.label)}`;
+    $('.tbSub').textContent = `${st.unit === 'week' ? '주별' : '월별'} · ${B[st.i0]?.full || ''} ~ ${B[st.i1]?.full || ''}`;
+    root.querySelectorAll('[data-r]').forEach((b) => b.classList.toggle('on', b.dataset.r === st.range));
+    root.querySelectorAll('[data-u]').forEach((b) => { b.classList.toggle('on', b.dataset.u === st.unit); b.disabled = b.dataset.u === 'week' && !!m.monthOnly; });
+    // 통계
+    const vis = (s) => s.vals.slice(st.i0, st.i1 + 1);
+    if (!m.multi) {
+      const v = vis(S[0]); const idx = v.map((x, i) => [x, i + st.i0]).filter((x) => x[0] !== null);
+      const done = idx.filter(([, i]) => !B[i].partial);
+      const last = idx[idx.length - 1], prev = idx[idx.length - 2];
+      const avg = done.length ? done.reduce((a, x) => a + x[0], 0) / done.length : null;
+      const pool = done.length ? done : idx; const hi = pool.reduce((a, x) => (!a || x[0] > a[0] ? x : a), null), lo = pool.reduce((a, x) => (!a || x[0] < a[0] ? x : a), null);
+      $('.tbStats').innerHTML = idx.length ? `
+        <div><span>최근 (${esc(B[last[1]].label)}${B[last[1]].partial ? ' · 진행 중' : ''})</span><b style="color:${m.color}">${fmtFull(last[0], m)}</b>${prev ? chg(last[0], prev[0]) : ''}</div>
+        <div><span>기간 평균${done.length < idx.length ? ' <small>(진행 중 제외)</small>' : ''}</span><b>${avg === null ? '-' : fmtFull(avg, m)}</b></div>
+        <div><span>최고 · ${esc(B[hi[1]].label)}</span><b>${fmtFull(hi[0], m)}</b></div>
+        <div><span>최저 · ${esc(B[lo[1]].label)}</span><b>${fmtFull(lo[0], m)}</b></div>` : '<div><span>이 기간에 올라온 자료가 없어요</span><b>-</b></div>';
+    } else {
+      $('.tbStats').innerHTML = S.map((s) => { const v = vis(s).filter((x) => x !== null); const tot = v.reduce((a, x) => a + x, 0);
+        return `<div><span><i class="dot" style="background:${s.color}"></i>${esc(s.name)} · 기간 합계</span><b style="color:${s.color}">${comma(tot)}${m.unit}</b><small class="muted">평균 ${v.length ? (tot / v.length).toFixed(1) : '-'}${m.unit}</small></div>`; }).join('');
+    }
+    // 그래프
+    const W = Math.max(320, plot.clientWidth), H = Math.max(240, Math.min(360, Math.round(W * 0.38)));
+    const P = { l: 56, r: 18, t: 18, b: 30 }, iw = W - P.l - P.r, ih = H - P.t - P.b;
+    const n = st.i1 - st.i0 + 1;
+    const allV = S.flatMap((s) => vis(s)).filter((x) => x !== null);
+    let lo = allV.length ? Math.min(...allV) : 0, hi = allV.length ? Math.max(...allV) : 1;
+    if (lo > 0 && lo < hi * 0.35) lo = 0;
+    if (hi === lo) { hi = hi ? hi * 1.1 : 1; lo = lo ? lo * 0.9 : 0; }
+    const pad = (hi - lo) * 0.12; hi += pad; lo = lo === 0 ? 0 : Math.max(0, lo - pad);
+    const step = niceStep((hi - lo) / 4); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+    const X = (i) => P.l + (n <= 1 ? iw / 2 : ((i - st.i0) / (n - 1)) * iw), Y = (v) => P.t + ih - ((v - lo) / ((hi - lo) || 1)) * ih;
+    let g = `<defs>${S.map((s, k) => `<linearGradient id="tbg${k}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${s.color}" stop-opacity="${m.multi ? 0.12 : 0.28}"/><stop offset="1" stop-color="${s.color}" stop-opacity="0"/></linearGradient>`).join('')}</defs>`;
+    for (let t = lo; t <= hi + step / 2; t += step) g += `<line class="grid" x1="${P.l}" x2="${W - P.r}" y1="${Y(t)}" y2="${Y(t)}"/><text class="ax" x="${P.l - 8}" y="${Y(t) + 4}" text-anchor="end">${fmtShort(t, m.money)}</text>`;
+    const every = Math.max(1, Math.ceil(n / Math.max(3, Math.floor(iw / 58))));
+    for (let i = st.i0; i <= st.i1; i++) if ((i - st.i0) % every === 0 || i === st.i1) g += `<text class="ax" x="${X(i)}" y="${H - 8}" text-anchor="middle">${esc(B[i].label)}</text>`;
+    S.forEach((s, k) => {
+      const pts = []; for (let i = st.i0; i <= st.i1; i++) if (s.vals[i] !== null) pts.push([X(i), Y(s.vals[i]), i]);
+      if (!pts.length) return;
+      const line = pts.map((p, j) => `${j ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
+      if (pts.length > 1) g += `<path d="${line}L${pts[pts.length - 1][0].toFixed(1)},${(P.t + ih).toFixed(1)}L${pts[0][0].toFixed(1)},${(P.t + ih).toFixed(1)}Z" fill="url(#tbg${k})"/>`;
+      g += `<path class="ln" d="${line}" stroke="${s.color}" pathLength="1"/>`;
+      if (pts.length <= 70) pts.forEach((p) => { g += `<circle class="pt${B[p[2]].partial ? ' partial' : ''}" cx="${p[0]}" cy="${p[1]}" r="${n > 30 ? 2.5 : 4}" stroke="${s.color}" fill="${B[p[2]].partial ? '#fff' : s.color}"/>`; });
+    });
+    if (!m.multi && allV.length > 1) { const dn = vis(S[0]).filter((x, i) => x !== null && !B[i + st.i0].partial); if (dn.length > 1) { const av = dn.reduce((a, x) => a + x, 0) / dn.length; g += `<line class="avg" x1="${P.l}" x2="${W - P.r}" y1="${Y(av)}" y2="${Y(av)}"/><text class="avgT" x="${W - P.r}" y="${Y(av) - 5}" text-anchor="end">평균 ${fmtShort(av, m.money)}</text>`; } }
+    g += `<line class="cross" x1="0" x2="0" y1="${P.t}" y2="${P.t + ih}" style="display:none"/>`;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('width', W); svg.setAttribute('height', H); svg.innerHTML = g;
+    st.geo = { X, P, iw, n, W };
+    const total = B.length; const nav = $('.tbNav i'); nav.style.left = `${(st.i0 / total) * 100}%`; nav.style.width = `${(n / total) * 100}%`;
+    $('.tbNav').style.display = n < total ? '' : 'none';
+  };
+  const idxAt = (clientX) => { const r = svg.getBoundingClientRect(); const { P, iw, n, W } = st.geo; const x = ((clientX - r.left) / r.width) * W; return Math.max(st.i0, Math.min(st.i1, Math.round(st.i0 + ((x - P.l) / (iw || 1)) * (n - 1)))); };
+  const showTip = (clientX) => {
+    const i = idxAt(clientX); const m = METS[st.metric] || METS.fee; const x = st.geo.X(i);
+    const cr = svg.querySelector('.cross'); cr.style.display = ''; cr.setAttribute('x1', x); cr.setAttribute('x2', x);
+    tip.innerHTML = `<b>${esc(st.B[i].full)}${st.B[i].partial ? ' <small>(진행 중)</small>' : ''}</b>${st.S.map((s) => `<div><i class="dot" style="background:${s.color}"></i>${m.multi ? esc(s.name) + ' ' : ''}<b>${fmtFull(s.vals[i], m)}</b>${i > 0 && s.vals[i - 1] !== null && s.vals[i] !== null ? ' ' + chg(s.vals[i], s.vals[i - 1]) : ''}</div>`).join('')}`;
+    const r = svg.getBoundingClientRect(); const px = (x / st.geo.W) * r.width;
+    tip.style.display = 'block'; tip.style.left = `${Math.min(Math.max(px - tip.offsetWidth / 2, 0), r.width - tip.offsetWidth)}px`;
+  };
+  const zoom = (f, center) => {
+    const n = st.i1 - st.i0 + 1, total = st.B.length; const c = center ?? (st.i0 + st.i1) / 2;
+    let nn = Math.round(n * f); nn = Math.max(Math.min(3, total), Math.min(total, nn)); if (nn === n && f < 1) nn = Math.max(3, n - 1);
+    let a = Math.round(c - (c - st.i0) * (nn / n)); a = Math.max(0, Math.min(total - nn, a)); st.i0 = a; st.i1 = a + nn - 1; draw();
+  };
+  svg.addEventListener('wheel', (e) => { e.preventDefault(); zoom(e.deltaY < 0 ? 0.8 : 1.25, idxAt(e.clientX)); }, { passive: false });
+  let drag = null;
+  svg.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, i0: st.i0, i1: st.i1 }; svg.setPointerCapture(e.pointerId); });
+  svg.addEventListener('pointermove', (e) => {
+    if (drag) { const r = svg.getBoundingClientRect(); const per = (st.geo.iw / st.geo.W) * r.width / Math.max(1, st.geo.n - 1); const d = Math.round((drag.x - e.clientX) / per);
+      const span = drag.i1 - drag.i0; const a = Math.max(0, Math.min(st.B.length - 1 - span, drag.i0 + d)); if (a !== st.i0) { st.i0 = a; st.i1 = a + span; draw(); } }
+    showTip(e.clientX);
+  });
+  svg.addEventListener('pointerup', () => { drag = null; });
+  svg.addEventListener('pointerleave', () => { drag = null; tip.style.display = 'none'; const cr = svg.querySelector('.cross'); if (cr) cr.style.display = 'none'; });
+  svg.addEventListener('dblclick', () => { compute(); draw(true); });
+  root.querySelectorAll('[data-r]').forEach((b) => b.onclick = () => { st.range = b.dataset.r; compute(); draw(true); });
+  root.querySelectorAll('[data-u]').forEach((b) => b.onclick = () => { st.unit = b.dataset.u; compute(); draw(true); });
+  root.querySelectorAll('[data-z]').forEach((b) => b.onclick = () => { if (b.dataset.z === 'reset') { compute(); draw(true); } else zoom(b.dataset.z === 'in' ? 0.6 : 1.6); });
+  let rt; const onR = () => { clearTimeout(rt); rt = setTimeout(() => { if (document.body.contains(root)) draw(); else window.removeEventListener('resize', onR); }, 150); };
+  window.addEventListener('resize', onR);
+  return {
+    async init() { st.data = await loadTrendData(); compute(); draw(true); },
+    select(key) { if (!METS[key]) return; st.metric = key; compute(); draw(true); root.closest('.tbCard')?.classList.remove('flash'); void root.offsetWidth; root.closest('.tbCard')?.classList.add('flash'); },
+    get metric() { return st.metric; },
+  };
+}
+
 // ---------- 회의 자료 (주간·월간) ----------
 // 월간회의 기준: 환자 현황 · 예약 현황 · 매출 현황 · 진료 현황. 지난 기간과 비교
 async function renderMeet() {
@@ -1429,6 +1596,7 @@ function kpiCount(days, items) {
   return out;
 }
 async function applyDentweb(parsed) {
+  tbCache = null;
   const keys = Object.keys(parsed.days).sort();
   for (const day of keys) {
     const ref = doc(db, 'daily', day); const snap = await getDoc(ref); const cur = snap.exists() ? snap.data() : {};
@@ -1551,24 +1719,24 @@ async function renderDash() {
     <div class="row between"><div><p class="eyebrow">DASHBOARD</p><h1>대시보드</h1></div>
       <div class="row"><button class="ghost" id="mPrev">◀</button><b class="monthLbl">${y}년 ${m}월</b><button class="ghost" id="mNext">▶</button></div></div>
     ${freshH(lastDay, feeAt, month)}
+    <section class="card tbCard"><div id="tbRoot"><p class="muted">추이 보드를 불러오는 중…</p></div></section>
+    <p class="muted sm tbGuide">👇 아래 숫자나 항목 이름을 누르면 위 보드가 그 항목의 흐름으로 바뀌어요.</p>
     <h3 class="dashH">💰 매출</h3>
-    <div class="kpis dashK"><div class="kpi"><span>총 매출 (총진료비)</span><b>${W(total)}</b></div><div class="kpi"><span>비급여</span><b>${W(sumF('nonpay'))}</b></div>
-      <div class="kpi"><span>공단 청구액</span><b>${W(sumF('claim'))}</b></div><div class="kpi"><span>본인부담</span><b>${W(sumF('copay'))}</b></div></div>
+    <div class="kpis dashK"><button class="kpi tm" data-tm="fee"><span>총 매출 (총진료비)</span><b>${W(total)}</b></button><button class="kpi tm" data-tm="nonpay"><span>비급여</span><b>${W(sumF('nonpay'))}</b></button>
+      <button class="kpi tm" data-tm="claim"><span>공단 청구액</span><b>${W(sumF('claim'))}</b></button><button class="kpi tm" data-tm="copay"><span>본인부담</span><b>${W(sumF('copay'))}</b></button></div>
     <h3 class="dashH">👥 환자</h3>
-    <div class="dashGrid two"><div class="card"><div class="kpis"><div class="kpi"><span>총 환자 수 (실인원)</span><b>${mi.patients !== undefined ? comma(mi.patients) + '명' : '-'}</b></div>
-        <div class="kpi"><span>내원 수 (연인원)</span><b>${comma(patients)}회</b></div><div class="kpi"><span>신환</span><b class="accent">${mi.newPatients !== undefined ? comma(mi.newPatients) : comma(newPts)}명</b></div></div></div>
-      <div class="card"><h4>신환 내원경로</h4>${routes.map(([k2, v]) => `<div class="hbar"><span>${esc(k2)}</span><i style="width:${Math.round(v / maxR * 100)}%"></i><b>${v}</b></div>`).join('') || '<p class="muted sm">자료가 없어요.</p>'}</div></div>
+    <div class="dashGrid two"><div class="card"><div class="kpis"><button class="kpi tm" data-tm="uniq"><span>총 환자 수 (실인원)</span><b>${mi.patients !== undefined ? comma(mi.patients) + '명' : '-'}</b></button>
+        <button class="kpi tm" data-tm="visits"><span>내원 수 (연인원)</span><b>${comma(patients)}회</b></button><button class="kpi tm" data-tm="np"><span>신환</span><b class="accent">${mi.newPatients !== undefined ? comma(mi.newPatients) : comma(newPts)}명</b></button>
+        <button class="kpi tm" data-tm="avg"><span>일평균 내원</span><b>${days.filter((x) => num(x.dw?.fee) || num(x.dw?.patients)).length ? (patients / days.filter((x) => num(x.dw?.fee) || num(x.dw?.patients)).length).toFixed(1) : '-'}명</b></button></div></div>
+      <div class="card tm routesCard" data-tm="routes"><h4>신환 내원경로 <small class="muted">누르면 간판·검색·소개 추이</small></h4>${routes.map(([k2, v]) => `<div class="hbar"><span>${esc(k2)}</span><i style="width:${Math.round(v / maxR * 100)}%"></i><b>${v}</b></div>`).join('') || '<p class="muted sm">자료가 없어요.</p>'}</div></div>
     <h3 class="dashH">🦷 핵심 진료 <small class="muted">진료내역에서 자동으로 세요</small></h3>
-    <div class="kcatGrid">${kpiCats.map((c) => `<div class="card kcat"><h4>${esc(c)}</h4>${kpiItems.filter((k2) => (k2.cat || '기타') === c).map((k2) => `<button class="kline" data-kb="${esc(k2.name)}"><span>${esc(k2.name)}</span><b>${comma(kpiSum[k2.name] || 0)}<small>${k2.by === 'teeth' ? '개' : '건'}</small></b></button>`).join('')}</div>`).join('')}</div>
-    <div class="card kboard" id="kboard">${kBoard(kpiItems[0]?.name)}</div>
-    <p class="muted sm">항목 이름을 누르면 위 그래프가 그 진료의 6개월 추이로 바뀌어요.</p>
+    <div class="kcatGrid">${kpiCats.map((c) => `<div class="card kcat"><h4>${esc(c)}</h4>${kpiItems.filter((k2) => (k2.cat || '기타') === c).map((k2) => `<button class="kline tm" data-tm="k:${esc(k2.name)}"><span>${esc(k2.name)}</span><b>${comma(kpiSum[k2.name] || 0)}<small>${k2.by === 'teeth' ? '개' : '건'}</small></b></button>`).join('')}</div>`).join('')}</div>
+
     <details class="card"><summary class="sm"><b>⚙️ 핵심 진료 항목 고치기</b></summary>
       <p class="muted sm">덴트웹 진료내역에 들어가는 글자로 셉니다. 여러 글자는 | 로 이어요 (예: 인레이 셋팅|온레이 셋팅). 분류는 수면진료·임플란트·보철·보존·치주 중에 고르거나 새로 적어도 돼요. 저장하면 이미 올린 자료도 새 기준으로 바로 다시 세요.</p>
       <div id="kpiRows">${kpiItems.map((k2) => `<div class="row kpiRow"><input class="kC" list="kcatL" value="${esc(k2.cat || '')}" placeholder="분류"><input class="kN" value="${esc(k2.name)}" placeholder="이름"><input class="kK" value="${esc(k2.kw)}" placeholder="진료내역 글자"><select class="kB"><option value="teeth" ${k2.by === 'teeth' ? 'selected' : ''}>치아 수</option><option value="visit" ${k2.by !== 'teeth' ? 'selected' : ''}>진료 건수</option></select><button class="ghost sm kX">✕</button></div>`).join('')}</div>
       <datalist id="kcatL">${KPI_CATS.map((c) => `<option value="${c}">`).join('')}</datalist>
       <div class="row"><button class="sm" id="kAdd">+ 항목</button><button class="primary sm" id="kSave">저장</button></div></details>
-    <h3 class="dashH">📈 6개월 흐름</h3>
-    <div class="dashGrid three"><div class="card"><h4>총 매출 <small class="muted">(억)</small></h4>${trendBars('fee', 'var(--ch1)')}</div><div class="card"><h4>비급여 <small class="muted">(억)</small></h4>${trendBars('nonpay', 'var(--ch2)')}</div><div class="card"><h4>신환 <small class="muted">(명)</small></h4>${trendBars('np', 'var(--ch4)')}</div></div>
     <h3 class="dashH">📅 예약</h3>
     <div class="card"><p class="muted sm">주간 예약 수·대기시간은 덴트웹 <b>예약 목록</b>·<b>접수(대기) 기록</b> 파일이 있어야 계산할 수 있어요. 파일을 받으면 연결할게요.</p></div>
     <h3 class="dashH">🎯 목표·인센티브</h3>
@@ -1616,9 +1784,11 @@ async function renderDash() {
   const kRow = () => '<div class="row kpiRow"><input class="kC" list="kcatL" placeholder="분류"><input class="kN" placeholder="이름"><input class="kK" placeholder="진료내역 글자"><select class="kB"><option value="teeth">치아 수</option><option value="visit">진료 건수</option></select><button class="ghost sm kX">✕</button></div>';
   const bindKX = () => $app.querySelectorAll('.kX').forEach((b2) => b2.onclick = () => b2.closest('.kpiRow').remove());
   bindKX();
-  const selK = (name) => { $app.querySelectorAll('.kline').forEach((b2) => b2.classList.toggle('on', b2.dataset.kb === name)); document.getElementById('kboard').innerHTML = kBoard(name); };
-  $app.querySelectorAll('.kline').forEach((b2) => b2.onclick = () => selK(b2.dataset.kb));
-  if (kpiItems[0]) selK(kpiItems[0].name);
+  const tb = mountTrendBoard(document.getElementById('tbRoot'), kpiItems);
+  const pick = (key) => { $app.querySelectorAll('.tm').forEach((b2) => b2.classList.toggle('on', b2.dataset.tm === key)); tb.select(key);
+    const r = document.querySelector('.tbCard').getBoundingClientRect(); if (r.top < 0 || r.top > innerHeight * 0.5) document.querySelector('.tbCard').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  $app.querySelectorAll('.tm').forEach((b2) => b2.onclick = () => pick(b2.dataset.tm));
+  tb.init().then(() => $app.querySelectorAll('.tm').forEach((b2) => b2.classList.toggle('on', b2.dataset.tm === 'fee'))).catch((e) => { console.error(e); document.getElementById('tbRoot').innerHTML = '<p class="muted">추이 자료를 불러오지 못했어요.</p>'; });
   document.getElementById('kAdd').onclick = () => { document.getElementById('kpiRows').insertAdjacentHTML('beforeend', kRow()); bindKX(); };
   document.getElementById('kSave').onclick = async () => {
     const items = [...$app.querySelectorAll('.kpiRow')].map((r2) => ({ cat: r2.querySelector('.kC').value.trim() || '기타', name: r2.querySelector('.kN').value.trim(), kw: r2.querySelector('.kK').value.trim(), by: r2.querySelector('.kB').value })).filter((x) => x.name && x.kw);

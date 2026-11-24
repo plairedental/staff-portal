@@ -820,3 +820,56 @@ details.mtog>*:last-child{margin-bottom:12px}
 @media print { .onlyPrint { display: block; } .vbars i { animation: none; } .card { break-inside: avoid; } }
 .vbars.hasSel > div:not(.sel) i { opacity: .4; }
 .dashK .kpi b small { font-size: .5em; color: var(--muted); margin-left: 3px; display: inline; font-weight: 600; }
+/* 추이 보드 */
+.tbCard { padding: 1.1rem 1.2rem 1rem; background: linear-gradient(180deg, #fbfcff, #fff); border: 1px solid #e6ebf5; box-shadow: 0 6px 24px rgba(30, 60, 120, .06); scroll-margin-top: 80px; }
+.tbCard.flash { animation: tbflash .7s ease; }
+@keyframes tbflash { 0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, .35); } 100% { box-shadow: 0 6px 24px rgba(30, 60, 120, .06); } }
+.tbHead { display: flex; justify-content: space-between; align-items: flex-start; gap: .8rem; flex-wrap: wrap; }
+.tbHead .eyebrow { margin: 0; }
+.tbTitle { margin: .1rem 0 0; font-size: 1.35rem; }
+.tbSub { margin: .15rem 0 0; }
+.tbCtl { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.tbCtl .chips { margin: 0; }
+.tbCtl .chips button { padding: .3rem .7rem; font-size: .82rem; }
+.tbCtl .chips button:disabled { opacity: .35; }
+.tbZoom { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.tbZoom button { border: 0; border-radius: 0; background: #fff; padding: .3rem .65rem; font-size: .95rem; cursor: pointer; }
+.tbZoom button + button { border-left: 1px solid var(--line); }
+.tbZoom button:hover { background: #f1f5ff; }
+.tbStats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin: .9rem 0 .4rem; }
+.tbStats > div { background: #fff; border: 1px solid #edf0f6; border-radius: 12px; padding: .55rem .75rem; display: flex; flex-direction: column; gap: .1rem; }
+.tbStats span { font-size: .75rem; color: var(--muted); }
+.tbStats b { font-size: 1.15rem; }
+.tbStats .chg { font-size: .75rem; }
+.dot { display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin-right: .3rem; vertical-align: middle; }
+.tbPlot { position: relative; touch-action: pan-y; user-select: none; }
+.tbSvg { display: block; width: 100%; height: auto; cursor: grab; }
+.tbSvg:active { cursor: grabbing; }
+.tbSvg .grid { stroke: #edf0f6; stroke-width: 1; }
+.tbSvg .ax { fill: #8a94a6; font-size: 11px; }
+.tbSvg .ln { fill: none; stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
+.tbSvg.anim .ln { stroke-dasharray: 1; stroke-dashoffset: 1; animation: tbdraw .9s ease forwards; }
+@keyframes tbdraw { to { stroke-dashoffset: 0; } }
+.tbSvg .pt { stroke-width: 2; }
+.tbSvg.anim .pt { animation: tbfade .5s .5s both; }
+.tbSvg .pt.partial { stroke-dasharray: 2 2; }
+@keyframes tbfade { from { opacity: 0; } to { opacity: 1; } }
+.tbSvg .avg { stroke: #94a3b8; stroke-dasharray: 5 5; stroke-width: 1.2; }
+.tbSvg .avgT { fill: #64748b; font-size: 11px; }
+.tbSvg .cross { stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 3 3; }
+.tbTip { display: none; position: absolute; top: 4px; pointer-events: none; background: rgba(17, 24, 39, .92); color: #fff; border-radius: 10px; padding: .5rem .7rem; font-size: .8rem; min-width: 9rem; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); z-index: 2; }
+.tbTip > b { display: block; margin-bottom: .2rem; }
+.tbTip .chg.up { color: #4ade80; } .tbTip .chg.down { color: #f87171; } .tbTip .chg { color: #cbd5e1; }
+.tbNav { position: relative; height: 6px; background: #eef1f7; border-radius: 6px; margin: .4rem 0 .2rem; }
+.tbNav i { position: absolute; top: 0; bottom: 0; background: #93b4f8; border-radius: 6px; transition: left .15s, width .15s; }
+.tbHint { margin: .4rem 0 0; font-size: .72rem; }
+.tbGuide { margin: .5rem 0 0; }
+button.kpi.tm { text-align: left; font: inherit; color: inherit; cursor: pointer; transition: transform .12s, box-shadow .12s, border-color .12s; }
+.tm { cursor: pointer; }
+.kpi.tm:hover, .routesCard:hover { border-color: #b9ccf7; box-shadow: 0 4px 14px rgba(59, 130, 246, .12); }
+.kpi.tm:hover { transform: translateY(-1px); }
+.kpi.tm.on, .routesCard.on { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59, 130, 246, .18); }
+.kcat .kline.tm.on { background: #eef2ff; box-shadow: inset 3px 0 0 var(--ch3); }
+.kcat .kline.tm.on span { color: var(--ch3); font-weight: 700; }
+@media (max-width: 760px) { .tbCtl { width: 100%; } .tbTitle { font-size: 1.15rem; } .tbHint { display: none; } }
+@media print { .tbCtl, .tbHint, .tbNav { display: none; } }
