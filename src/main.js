@@ -1237,8 +1237,8 @@ const KPI_CATS = ['수면진료', '임플란트', '보철', '보존', '치주'];
 const KPI_DEFAULT = [
   { cat: '수면진료', name: '수면치료', kw: '의식하진정|진정처치', by: 'visit' },
   { cat: '임플란트', name: '임플란트 식립', kw: '임플란트 1차 수술', by: 'teeth' },
-  { cat: '보철', name: '인레이', kw: '인레이 셋팅|온레이 셋팅', by: 'teeth' },
-  { cat: '보철', name: '크라운', kw: '영구접착', by: 'teeth' },
+  { cat: '보철', name: '인레이', kw: '인레이 셋팅|온레이 셋팅|인레이 접착|온레이 접착', by: 'teeth' },
+  { cat: '보철', name: '크라운', kw: '영구접착 ?[(\\[] ?P ?[./]? ?S', by: 'teeth' },
   { cat: '보존', name: '근관치료', kw: '^(?!.*추가근관).*발수', by: 'teeth' },
   { cat: '치주', name: '스케일링', kw: '치석제거[(\\[]연1회', by: 'visit' },
   { cat: '치주', name: '치주치료', kw: '치주 ?소파술', by: 'teeth' },
