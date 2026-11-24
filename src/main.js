@@ -167,7 +167,7 @@ function renderWaiting() {
       </div>
     </div>`;
   document.getElementById('reload').onclick = () => location.reload();
-  document.getElementById('out').onclick = () => { idb.del('manual'); mcache = null; signOut(auth); };
+  document.getElementById('out').onclick = () => { idb.clear(); mcache = null; signOut(auth); };
 }
 
 // ---------- 화면 틀: 상단 카테고리 + 좌측 메뉴 ----------
@@ -281,7 +281,7 @@ function shell(content) {
   if (cat.key === 'manual') bindManualSide();
   document.getElementById('home').onclick = (e) => { e.preventDefault(); go('home'); };
   document.getElementById('me').onclick = (e) => { e.preventDefault(); go('my'); };
-  document.getElementById('out').onclick = () => { idb.del('manual'); mcache = null; signOut(auth); };
+  document.getElementById('out').onclick = () => { idb.clear(); mcache = null; signOut(auth); };
 }
 // 앱 안 이동을 브라우저 기록에 남겨서, 휴대폰·브라우저 '뒤로가기'로 이전 화면에 돌아가게 함
 let navDepth = 0;
@@ -2366,7 +2366,7 @@ const idb = (() => {
   let p;
   const open = () => p ||= new Promise((res, rej) => { const r = indexedDB.open('plaire-portal', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
   const run = async (mode, fn) => { const d = await open(); return new Promise((res, rej) => { const t = d.transaction('kv', mode); const q = fn(t.objectStore('kv')); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); }); };
-  return { get: (k) => run('readonly', (st) => st.get(k)).catch(() => null), set: (k, v) => run('readwrite', (st) => st.put(v, k)).catch(() => null), del: (k) => run('readwrite', (st) => st.delete(k)).catch(() => null) };
+  return { get: (k) => run('readonly', (st) => st.get(k)).catch(() => null), set: (k, v) => run('readwrite', (st) => st.put(v, k)).catch(() => null), del: (k) => run('readwrite', (st) => st.delete(k)).catch(() => null), clear: () => run('readwrite', (st) => st.clear()).catch(() => null) };
 })();
 // Firestore 시각 값은 기기에 저장할 수 있게 숫자로 바꿨다가 되돌림
 const tsOut = (o) => JSON.parse(JSON.stringify(o, function (k, v) { const raw = this[k]; return raw && typeof raw.toMillis === 'function' ? { __ts: raw.toMillis() } : v; }));
@@ -2403,6 +2403,16 @@ async function loadManual(force = false) {
   const names = tree.groups.map((g) => g.name);
   Object.values(pages).forEach((p) => { if (p.group && !names.includes(p.group)) { names.push(p.group); tree.groups.push({ name: p.group }); } });
   mcache = { pages, tree, pending };
+  return mcache;
+}
+// 한 페이지만 바꿨을 때: 전체를 다시 읽지 않고 이 기기의 매뉴얼만 고친 뒤 '마지막 수정' 표시를 새로 남김
+async function manualLocal(id, data) {
+  if (!mcache) return loadManual(true);
+  if (data === null) delete mcache.pages[id];
+  else { const p = { ...(mcache.pages[id] || { id }), ...data, id }; if (p.updatedAt && typeof p.updatedAt.toMillis !== 'function') { const t = Date.now(); p.updatedAt = { toDate: () => new Date(t), toMillis: () => t, seconds: Math.floor(t / 1000) }; } mcache.pages[id] = p; }
+  const v = Date.now();
+  await setDoc(doc(db, 'manualMeta', 'stamp'), { v, updatedAt: serverTimestamp(), by: me.name });
+  idb.set('manual', { v, rows: tsOut(Object.values(mcache.pages)) });
   return mcache;
 }
 const mPages = () => Object.values(mcache?.pages || {}).filter((p) => !p.id.startsWith('_'));
@@ -2472,8 +2482,9 @@ function cleanHtml(html) {
 async function hydrateImages(root) {
   for (const img of root.querySelectorAll('img[data-img]')) {
     const id = img.dataset.img;
+    if (!mimg[id]) { const c = await idb.get('img:' + id); if (c) mimg[id] = c; }
     if (!mimg[id]) {
-      try { const d = await getDoc(doc(db, id.startsWith('eimg-') ? 'eduImages' : id.startsWith('pimg-') ? 'practiceImages' : 'manualImages', id)); if (d.exists()) mimg[id] = d.data().data; } catch (e) { /* 무시 */ }
+      try { const d = await getDoc(doc(db, id.startsWith('eimg-') ? 'eduImages' : id.startsWith('pimg-') ? 'practiceImages' : 'manualImages', id)); if (d.exists()) { mimg[id] = d.data().data; idb.set('img:' + id, mimg[id]); } } catch (e) { /* 무시 */ }
     }
     if (mimg[id]) img.src = mimg[id];
   }
@@ -2731,7 +2742,7 @@ async function renderManualEdit(id) {
     if (!confirm(`"${p.title}" 페이지를 삭제할까요? 되돌릴 수 없어요.`)) return;
     await deleteDoc(doc(db, 'manuals', id));
     await addMLog({ pageId: id, title: p.title, summary: '페이지 삭제' });
-    toast('삭제했어요'); await loadManual(true); go('manual');
+    toast('삭제했어요'); await manualLocal(id, null); go('manual');
   });
   document.getElementById('save').onclick = async () => {
     const btn = document.getElementById('save'); btn.disabled = true;
@@ -2751,7 +2762,7 @@ async function renderManualEdit(id) {
       if (isNew) pid = (await addDoc(collection(db, 'manuals'), data)).id;
       else await setDoc(doc(db, 'manuals', id), data, { merge: true });
       await addMLog({ pageId: pid, title, summary: val('msum') || (isNew ? '새 페이지 추가' : '내용 수정'), basis: val('mbasis') });
-      toast('저장했어요'); await loadManual(true);
+      toast('저장했어요'); await manualLocal(pid, data);
       go('manual', pid === '_home' ? null : pid === '_check' ? { tab: 'check' } : { id: pid });
     } catch (e) { console.error(e); alert('저장하지 못했어요: ' + (e.code || e.message)); btn.disabled = false; }
   };
