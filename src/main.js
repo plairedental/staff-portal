@@ -175,11 +175,11 @@ function renderWaiting() {
 function categories() {
   const f = (items) => (items || []).filter((i) => !i[4] || i[4]());
   return [
-    { key: 'biz', label: '경영·통계', icon: '📊', show: () => me.role === 'admin', items: [
-      ['dash', '대시보드', '📊', '이번 달 매출·환자·핵심 진료와 목표 대비 성과를 한눈에 봐요.', () => me.role === 'admin'],
-      ['meet', '회의 자료', '🗓️', '주간·월간 회의용 핵심 지표를 지난 기간과 비교해 봐요.', () => me.role === 'admin'],
-      ['daily', '일계표', '🧮', '날짜별 수입·지출·구강용품 판매와 마감을 기록해요.', () => me.role === 'admin'],
-      ['goods', '구강용품', '🪥', '구강용품 품목·가격·재고·매입·판매를 관리해요.', () => me.role === 'admin']
+    { key: 'biz', label: '경영·통계', icon: '📊', show: isBiz, items: [
+      ['dash', '대시보드', '📊', '이번 달 매출·환자·핵심 진료와 목표 대비 성과를 한눈에 봐요.', isBiz],
+      ['meet', '회의 자료', '🗓️', '주간·월간 회의용 핵심 지표를 지난 기간과 비교해 봐요.', isBiz],
+      ['daily', '일계표', '🧮', '날짜별 수입·지출·구강용품 판매와 마감을 기록해요.', isBiz],
+      ['goods', '구강용품', '🪥', '구강용품 품목·가격·재고·매입·판매를 관리해요.', isBiz]
     ], admin: [
       ['incentive', '목표매출·인센티브', '🎯', '인건비 비율로 목표 매출을 정하고 팀별 인센티브를 계산해요.', () => me.role === 'admin']
     ] },
@@ -214,7 +214,9 @@ function categories() {
    .map((c) => ({ ...c, items: f(c.items), admin: f(c.admin) }));
 }
 // 좌측 아래: 관리자 메뉴(카테고리마다 다름) → 맨 아래 내 계정
-const GLOBAL_ADMIN = () => [];   // 화면 설정은 오른쪽 위 ⚙️ 버튼으로 옮김 (관리자만)
+const GLOBAL_ADMIN = () => [];
+// 경영·통계: 관리자 + 총괄실장 (목표매출·인센티브는 관리자만)
+const isBiz = () => ['admin', 'chief'].includes(me?.role);   // 화면 설정은 오른쪽 위 ⚙️ 버튼으로 옮김 (관리자만)
 const MY_ITEMS = [
   ['my', '마이페이지', '👤', '내 기본정보, 연봉, 글씨 크기를 확인해요.'],
   ['security', '보안정책', '🛡️', '내 정보가 어떻게 보호되는지 확인해요.']
@@ -323,14 +325,14 @@ async function render() {
     if (view === 'work') return await renderWork();
     if (view === 'settings' && me.role === 'admin') return renderSettings();
     if (view === 'incentive' && me.role === 'admin') return await renderIncentive();
-    if (view === 'dash' && me.role === 'admin') return await renderDash();
-    if (view === 'meet' && me.role === 'admin') return await renderMeet();
+    if (view === 'dash' && isBiz()) return await renderDash();
+    if (view === 'meet' && isBiz()) return await renderMeet();
     if (view === 'perf') return await renderPerfDash();
     if (view === 'edu') return await renderEdu();
     if (view === 'eduprog') return await renderEduProg();
     if (view === 'prac') return await renderPractice();
-    if (view === 'daily' && me.role === 'admin') return await renderDaily();
-    if (view === 'goods' && me.role === 'admin') return await renderGoods();
+    if (view === 'daily' && isBiz()) return await renderDaily();
+    if (view === 'goods' && isBiz()) return await renderGoods();
     if (view === 'payroll' && me.role === 'admin') return await renderPayroll();
     if (view === 'docs' && me.role === 'admin') return await renderDocs();
     if (view === 'docreq') return await renderDocReq();
@@ -1625,8 +1627,9 @@ function vbars(pts, { fmt = (v) => comma(Math.round(v)), color = 'var(--ch1)', z
 const chg = (cur, prev) => { if (!prev) return '<span class="chg">-</span>'; const r = (cur - prev) / prev * 100; return `<span class="chg ${r > 0.05 ? 'up' : r < -0.05 ? 'down' : ''}">${r > 0.05 ? '▲ ' + r.toFixed(1) + '%' : r < -0.05 ? '▼ ' + Math.abs(r).toFixed(1) + '%' : '변화 없음'}</span>`; };
 async function dashData(month) {
   const [y, m] = month.split('-').map(Number);
-  const [ds, incDoc, incAll, people, salSnap, org, products] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), getDoc(doc(db, 'incentive', month)),
-    getDocs(collection(db, 'incentive')), loadPeople(), getDocs(collection(db, 'salaries')), loadOrg(), loadProducts(true)]);
+  const isA = me.role === 'admin', none = { exists: () => false, data: () => null, docs: [] };
+  const [ds, incDoc, incAll, people, salSnap, org, products] = await Promise.all([getDocs(query(collection(db, 'daily'), where('month', '==', month))), isA ? getDoc(doc(db, 'incentive', month)) : none,
+    isA ? getDocs(collection(db, 'incentive')) : none, loadPeople(), isA ? getDocs(collection(db, 'salaries')) : none, loadOrg(), loadProducts(true)]);
   let inc = incDoc.exists() ? incDoc.data() : null;
   if (!inc) { const prev = incAll.docs.map((x) => x.id).filter((k) => k < month).sort().pop(); if (prev) inc = incAll.docs.find((x) => x.id === prev).data(); }
   const sal = {}; salSnap.docs.forEach((x) => { sal[x.id] = x.data(); });
@@ -1689,7 +1692,7 @@ async function renderDash() {
   const shift = (k) => { const d = new Date(y, m - 1 + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
   const D = await dashData(month);
   const { ds, incDoc, inc, staff, doctors, teamOf, target, clinicTeams, days, paid, patients, newPts, byDoctor, byDay, total, byStaff, adj, ADJ, adjSum, pct, ring, totalAdj, totalOver, teamCards, unitRes, docRes, goodsBy, goodsRate, goodsTotal, incTotal, ratio } = D;
-  publishPerf(month, D).catch((e) => console.error('성과 공개 실패', e));
+  if (me.role === 'admin') publishPerf(month, D).catch((e) => console.error('성과 공개 실패', e));
   const maxDay = Math.max(1, ...byDay.map((x) => x.v));
   const W = (n) => comma(Math.round(n));
   // 경영 지표: 매출 구성, 환자, 핵심진료, 6개월 흐름
@@ -1734,14 +1737,14 @@ async function renderDash() {
     <h3 class="dashH">🦷 핵심 진료 <small class="muted">진료내역에서 자동으로 세요</small></h3>
     <div class="kcatGrid">${kpiCats.map((c) => `<div class="card kcat"><h4>${esc(c)}</h4>${kpiItems.filter((k2) => (k2.cat || '기타') === c).map((k2) => `<button class="kline tm" data-tm="k:${esc(k2.name)}"><span>${esc(k2.name)}</span><b>${comma(kpiSum[k2.name] || 0)}<small>${k2.by === 'teeth' ? '개' : '건'}</small></b></button>`).join('')}</div>`).join('')}</div>
 
-    <details class="card"><summary class="sm"><b>⚙️ 핵심 진료 항목 고치기</b></summary>
+    ${me.role === 'admin' ? `    <details class="card"><summary class="sm"><b>⚙️ 핵심 진료 항목 고치기</b></summary>
       <p class="muted sm">덴트웹 진료내역에 들어가는 글자로 셉니다. 여러 글자는 | 로 이어요 (예: 인레이 셋팅|온레이 셋팅). 분류는 수면진료·임플란트·보철·보존·치주 중에 고르거나 새로 적어도 돼요. 저장하면 이미 올린 자료도 새 기준으로 바로 다시 세요.</p>
       <div id="kpiRows">${kpiItems.map((k2) => `<div class="row kpiRow"><input class="kC" list="kcatL" value="${esc(k2.cat || '')}" placeholder="분류"><input class="kN" value="${esc(k2.name)}" placeholder="이름"><input class="kK" value="${esc(k2.kw)}" placeholder="진료내역 글자"><select class="kB"><option value="teeth" ${k2.by === 'teeth' ? 'selected' : ''}>치아 수</option><option value="visit" ${k2.by !== 'teeth' ? 'selected' : ''}>진료 건수</option></select><button class="ghost sm kX">✕</button></div>`).join('')}</div>
       <datalist id="kcatL">${KPI_CATS.map((c) => `<option value="${c}">`).join('')}</datalist>
-      <div class="row"><button class="sm" id="kAdd">+ 항목</button><button class="primary sm" id="kSave">저장</button></div></details>
+      <div class="row"><button class="sm" id="kAdd">+ 항목</button><button class="primary sm" id="kSave">저장</button></div></details>` : ''}
     <h3 class="dashH">📅 예약</h3>
     <div class="card"><p class="muted sm">주간 예약 수·대기시간은 덴트웹 <b>예약 목록</b>·<b>접수(대기) 기록</b> 파일이 있어야 계산할 수 있어요. 파일을 받으면 연결할게요.</p></div>
-    <h3 class="dashH">🎯 목표·인센티브</h3>
+    ${me.role === 'admin' ? `    <h3 class="dashH">🎯 목표·인센티브</h3>
     ${!inc ? '<p class="reqNow">목표매출·인센티브 설정이 아직 없어요. 먼저 <b>목표매출·인센티브</b>에서 저장해 주세요.</p>' : ''}
     <div class="kpis dashK">
       <div class="kpi"><span>성과</span><b class="${total - totalAdj >= target ? 'accent' : ''}">${target ? (total - totalAdj >= target ? '목표 달성! ' : '') + pct(total - totalAdj, target) + '%' : '-'}</b></div>
@@ -1774,8 +1777,7 @@ async function renderDash() {
       ${clinicTeams.map((t, i) => `<div class="card dCard"><h4><span class="tnum">${i + 1}</span>${esc(t)}</h4><dl>
         ${ADJ.map(([k, l]) => `<dt>${l}</dt><dd><input class="adjIn" data-t="${esc(t)}" data-k="${k}" inputmode="numeric" value="${num(adj[t]?.[k]) ? comma(num(adj[t][k])) : ''}" placeholder="0"></dd>`).join('')}
         <dt><b>합계</b></dt><dd class="neg">${W(adjSum(t))}</dd></dl></div>`).join('') || '<p class="muted">진료팀이 정해지지 않았어요.</p>'}
-    </div>
-
+    </div>` : ''}
     <div class="dashGrid two">
       <div class="card"><h4>📊 일별 총진료비</h4>${days.length ? `<div class="bars">${byDay.map((x) => `<div class="bar1" title="${x.d} ${W(x.v)}원"><i style="height:${Math.round(x.v / maxDay * 100)}%"></i><small>${+x.d.slice(8)}</small></div>`).join('')}</div>` : '<p class="muted">일계표가 아직 없어요.</p>'}</div>
       <div class="card"><h4>👤 개인 성과 <small class="muted">총진료비 기준</small></h4><div class="tbl"><table class="mt incT"><tr><th>이름</th><th>구분</th><th class="r">총진료비</th></tr>
@@ -1791,8 +1793,8 @@ async function renderDash() {
     const r = document.querySelector('.tbCard').getBoundingClientRect(); if (r.top < 0 || r.top > innerHeight * 0.5) document.querySelector('.tbCard').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   $app.querySelectorAll('.tm').forEach((b2) => b2.onclick = () => pick(b2.dataset.tm));
   tb.init().then(() => $app.querySelectorAll('.tm').forEach((b2) => b2.classList.toggle('on', b2.dataset.tm === 'fee'))).catch((e) => { console.error(e); document.getElementById('tbRoot').innerHTML = '<p class="muted">추이 자료를 불러오지 못했어요.</p>'; });
-  document.getElementById('kAdd').onclick = () => { document.getElementById('kpiRows').insertAdjacentHTML('beforeend', kRow()); bindKX(); };
-  document.getElementById('kSave').onclick = async () => {
+  if (document.getElementById('kAdd')) document.getElementById('kAdd').onclick = () => { document.getElementById('kpiRows').insertAdjacentHTML('beforeend', kRow()); bindKX(); };
+  if (document.getElementById('kSave')) document.getElementById('kSave').onclick = async () => {
     const items = [...$app.querySelectorAll('.kpiRow')].map((r2) => ({ cat: r2.querySelector('.kC').value.trim() || '기타', name: r2.querySelector('.kN').value.trim(), kw: r2.querySelector('.kK').value.trim(), by: r2.querySelector('.kB').value })).filter((x) => x.name && x.kw);
     await setDoc(doc(db, 'settings', 'kpi'), { items }); toast('저장했어요. 새 기준으로 다시 셌어요'); go('dash', sub);
   };

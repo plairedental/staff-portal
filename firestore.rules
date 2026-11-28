@@ -145,18 +145,18 @@ service cloud.firestore {
     }
     // 일계표(환자 수납 기록 포함): 관리자만
     match /daily/{id} {
-      allow read, write: if isAdmin();
+      allow read, write: if hasRole(['admin', 'chief']);
     }
     // 구강용품 품목·매입: 관리자만
     match /products/{id} {
-      allow read, write: if isAdmin();
+      allow read, write: if hasRole(['admin', 'chief']);
     }
     match /purchases/{id} {
-      allow read, write: if isAdmin();
+      allow read, write: if hasRole(['admin', 'chief']);
     }
     // 덴트웹 월 요약(실인원·신환·내원경로): 관리자만
     match /dwMonth/{id} {
-      allow read, write: if isAdmin();
+      allow read, write: if hasRole(['admin', 'chief']);
     }
     // 목표매출·인센티브 설정: 관리자만
     match /incentive/{id} {
